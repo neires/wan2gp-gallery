@@ -11,7 +11,7 @@ class GalleryPlugin(WAN2GPPlugin):
     def __init__(self):
         super().__init__()
         self.name = "File Gallery"
-        self.version = "1.0.0"
+        self.version = "1.0.1"
         self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, and more"
         self.loaded_once = False
 
@@ -56,9 +56,29 @@ class GalleryPlugin(WAN2GPPlugin):
         
     def create_gallery_ui(self):
         css = """
-            #gallery-layout { display: flex; gap: 16px; min-height: 75vh; }
-            #gallery-container { flex: 3; overflow-y: auto; border: 1px solid #e0e0e0; padding: 10px; background-color: #f9f9f9; border-radius: 8px; }
-            #metadata-panel-container { flex: 1; overflow-y: auto; border: 1px solid #e0e0e0; padding: 15px; background-color: #ffffff; border-radius: 8px; }
+            #gallery-layout { 
+                display: flex; 
+                gap: 16px; 
+                min-height: 75vh; 
+                align-items: flex-start; /* Align both columns to the top */
+            }
+            #gallery-container { 
+                flex: 3; 
+                max-height: 80vh; 
+                overflow-y: auto; 
+                border: 1px solid #e0e0e0; 
+                padding: 10px; 
+                background-color: #f9f9f9; 
+                border-radius: 8px; 
+            }
+            #metadata-panel-container { 
+                flex: 1; 
+                border: 1px solid #e0e0e0; 
+                padding: 15px; 
+                background-color: #ffffff; 
+                border-radius: 8px;
+            }
+
             .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 16px; }
             .gallery-item { position: relative; cursor: pointer; border: 2px solid transparent; border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 5; display: flex; flex-direction: column; background-color: #ffffff; transition: all 0.2s ease-in-out; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
             .gallery-item:hover { border-color: #a0a0a0; transform: translateY(-2px); }
@@ -86,7 +106,7 @@ class GalleryPlugin(WAN2GPPlugin):
                     element.classList.toggle('selected');
                     const selectedItems = Array.from(gallery.querySelectorAll('.gallery-item.selected'));
                     const selectedPaths = selectedItems.map(el => el.dataset.path);
-                    selectedFilesInput.value = selectedPaths.join(',');
+                    selectedFilesInput.value = selectedPaths.join('||');
                     selectedFilesInput.dispatchEvent(new Event('input', { bubbles: true }));
                 };
                 
@@ -221,9 +241,12 @@ class GalleryPlugin(WAN2GPPlugin):
                         self.send_to_generator_settings_btn = gr.Button("Use Settings in Generator", interactive=False, visible=False)
                         self.join_videos_btn = gr.Button("Join 2 Selected Videos", interactive=False, visible=False)
                         self.recreate_join_btn = gr.Button("Recreate Join From This Video", visible=False, interactive=False)
-                        with gr.Row(visible=False) as self.frame_preview_row:
-                            self.first_frame_preview = gr.Image(label="First Frame", interactive=False, height=150)
-                            self.last_frame_preview = gr.Image(label="Last Frame", interactive=False, height=150)
+                        with gr.Column(visible=False) as self.preview_row:
+                            self.video_preview = gr.Video(label="Preview", interactive=True, height=250, visible=False)
+                            self.image_preview = gr.Image(label="Preview", interactive=False, height=250, visible=False)
+                            with gr.Row(visible=False) as self.frame_preview_row:
+                                self.first_frame_preview = gr.Image(label="First Frame", interactive=False, height=150)
+                                self.last_frame_preview = gr.Image(label="Last Frame", interactive=False, height=150)
                         self.metadata_panel_output = gr.HTML(value="<div class='metadata-content'><p class='placeholder'>Select a file to view its metadata.</p></div>")
                         with gr.Column(visible=False) as self.merge_info_display:
                             gr.Markdown("--- \n #### Merged From")
@@ -256,9 +279,9 @@ class GalleryPlugin(WAN2GPPlugin):
 
         outputs_list = [
             self.gallery_html_output, self.selected_files_for_backend, self.metadata_panel_output, 
-            self.join_videos_btn, self.send_to_generator_settings_btn, self.frame_preview_row, 
-            self.first_frame_preview, self.last_frame_preview, self.join_interface, 
-            self.recreate_join_btn, self.merge_info_display
+            self.join_videos_btn, self.send_to_generator_settings_btn, self.preview_row, 
+            self.video_preview, self.image_preview, self.frame_preview_row, self.first_frame_preview, self.last_frame_preview, 
+            self.join_interface, self.recreate_join_btn, self.merge_info_display
         ]
         no_updates = {comp: gr.update() for comp in outputs_list}
 
@@ -280,13 +303,14 @@ class GalleryPlugin(WAN2GPPlugin):
             inputs=[self.selected_files_for_backend, self.state], 
             outputs=[
                 self.join_videos_btn, self.send_to_generator_settings_btn, self.metadata_panel_output, 
-                self.path_for_settings_loader, self.frame_preview_row, self.first_frame_preview, 
-                self.last_frame_preview, self.join_interface, self.recreate_join_btn, self.merge_info_display,
+                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview, 
+                self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
+                self.join_interface, self.recreate_join_btn, self.merge_info_display,
                 self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image
             ], show_progress="hidden"
         )
         self.join_videos_btn.click(fn=self.show_join_interface, inputs=[self.selected_files_for_backend, self.state], outputs=[
-            self.join_interface, self.frame_preview_row, self.merge_info_display, self.metadata_panel_output,
+            self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
             self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
             self.video1_preview, self.video2_preview,
             self.video1_path, self.video2_path, self.video1_frame_slider, self.video2_frame_slider,
@@ -294,7 +318,7 @@ class GalleryPlugin(WAN2GPPlugin):
         ])
         self.recreate_join_btn.click(
             fn=self.recreate_join_interface, inputs=[self.path_for_settings_loader, self.state], outputs=[
-            self.join_interface, self.frame_preview_row, self.merge_info_display, self.metadata_panel_output,
+            self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
             self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
             self.video1_preview, self.video2_preview,
             self.video1_path, self.video2_path, self.video1_frame_slider, self.video2_frame_slider,
@@ -307,14 +331,15 @@ class GalleryPlugin(WAN2GPPlugin):
             inputs=[self.selected_files_for_backend, self.state],
             outputs=[
                 self.join_videos_btn, self.send_to_generator_settings_btn, self.metadata_panel_output,
-                self.path_for_settings_loader, self.frame_preview_row, self.first_frame_preview,
-                self.last_frame_preview, self.join_interface, self.recreate_join_btn, self.merge_info_display,
+                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview,
+                self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
+                self.join_interface, self.recreate_join_btn, self.merge_info_display,
                 self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image
             ]
         )
 
         return gallery_blocks
-
+        
     def list_output_files_as_html(self, current_state):
         save_path = self.server_config.get("save_path", "outputs")
         image_save_path = self.server_config.get("image_save_path", "outputs")
@@ -352,6 +377,9 @@ class GalleryPlugin(WAN2GPPlugin):
             self.join_videos_btn: gr.Button(visible=False),
             self.recreate_join_btn: gr.Button(visible=False),
             self.send_to_generator_settings_btn: gr.Button(visible=False),
+            self.preview_row: gr.Column(visible=False),
+            self.video_preview: gr.Video(value=None),
+            self.image_preview: gr.Image(value=None),
             self.frame_preview_row: gr.Row(visible=False),
             self.first_frame_preview: gr.Image(value=None),
             self.last_frame_preview: gr.Image(value=None),
@@ -391,7 +419,7 @@ class GalleryPlugin(WAN2GPPlugin):
         return f"<TABLE ID=video_info WIDTH=100%>{''.join(rows)}</TABLE>"
 
     def update_metadata_panel_and_buttons(self, selection_str, current_state):
-        file_paths = selection_str.split(',') if selection_str else []
+        file_paths = selection_str.split('||') if selection_str else []
         video_files = [f for f in file_paths if self.has_video_file_extension(f)]
         
         updates = {
@@ -399,9 +427,12 @@ class GalleryPlugin(WAN2GPPlugin):
             self.recreate_join_btn: gr.Button(visible=False),
             self.send_to_generator_settings_btn: gr.Button(visible=False),
             self.path_for_settings_loader: "",
+            self.preview_row: gr.Column(visible=False),
+            self.video_preview: gr.Video(visible=False, value=None),
+            self.image_preview: gr.Image(visible=False, value=None),
             self.frame_preview_row: gr.Row(visible=False),
             self.first_frame_preview: gr.Image(value=None),
-            self.last_frame_preview: gr.Image(value=None, visible=True),
+            self.last_frame_preview: gr.Image(value=None),
             self.join_interface: gr.Column(visible=False),
             self.merge_info_display: gr.Column(visible=False),
             self.metadata_panel_output: gr.HTML(value="<div class='metadata-content'><p class='placeholder'>Select a file to view its metadata.</p></div>", visible=True),
@@ -440,17 +471,20 @@ class GalleryPlugin(WAN2GPPlugin):
                     updates[self.merge_source2_prompt] = f"<b>{vid2_rel} (Frame {f2_num})</b><br>{p2[:100] + '...' if len(p2) > 100 else p2}"
                     updates[self.merge_source2_image] = f2_pil
                 else:
-                    updates[self.frame_preview_row] = gr.Row(visible=True) # Fallback to default preview
+                    updates[self.preview_row] = gr.Column(visible=True)
             
-            else: # Not a merge file, show normal preview
-                updates[self.frame_preview_row] = gr.Row(visible=True)
+            else:
+                updates[self.preview_row] = gr.Column(visible=True)
                 if self.has_video_file_extension(file_path):
+                    updates[self.video_preview] = gr.Video(value=file_path, visible=True)
+                    updates[self.frame_preview_row] = gr.Row(visible=True)
                     first_frame_pil = self.get_video_frame(file_path, 0, return_PIL=True)
                     _, _, _, frame_count = self.get_video_info(file_path)
                     last_frame_pil = self.get_video_frame(file_path, frame_count - 1, return_PIL=True) if frame_count > 1 else first_frame_pil
-                    updates[self.first_frame_preview], updates[self.last_frame_preview] = gr.Image(value=first_frame_pil, label="First Frame"), gr.Image(value=last_frame_pil, visible=True)
+                    updates[self.first_frame_preview] = gr.Image(value=first_frame_pil, label="First Frame")
+                    updates[self.last_frame_preview] = gr.Image(value=last_frame_pil, label="Last Frame", visible=True)
                 elif self.has_image_file_extension(file_path):
-                    updates[self.first_frame_preview], updates[self.last_frame_preview] = gr.Image(value=Image.open(file_path), label="Image Preview"), gr.Image(visible=False)
+                    updates[self.image_preview] = gr.Image(value=Image.open(file_path), label="Image Preview", visible=True)
 
         elif len(file_paths) > 1:
             updates[self.metadata_panel_output] = gr.HTML(value=f"<div class='metadata-content'><p>{len(file_paths)} items selected.</p></div>", visible=True)
@@ -482,16 +516,16 @@ class GalleryPlugin(WAN2GPPlugin):
             configs["image_prompt_type"] = updated_prompts
         self.set_model_settings(current_state, target_model_type, configs)
         gr.Info(f"Settings from '{os.path.basename(file_path)}' sent to generator.")
-        mf, mc = (gr.update(), gr.update()) if target_model_type == current_model_type else self.generate_dropdown_model_list(target_model_type)
+        mf, mbc, mc = (gr.update(), gr.update(), gr.update()) if target_model_type == current_model_type else self.generate_dropdown_model_list(target_model_type)
         return mf, mc, gr.update(selected="video_gen"), self.get_unique_id()
 
     def show_join_interface(self, selection_str, current_state):
-        video_files = [f for f in selection_str.split(',') if self.has_video_file_extension(f)] if selection_str else []
+        video_files = [f for f in selection_str.split('||') if self.has_video_file_extension(f)] if selection_str else []
         if len(video_files) != 2: gr.Warning("Please select exactly two videos."); return {}
         return self.recreate_join_interface(video_files, current_state)
     
     def recreate_join_interface(self, file_info, current_state):
-        if isinstance(file_info, str): # Called from single merged video
+        if isinstance(file_info, str):
             configs, _, _ = self.get_settings_from_file(current_state, file_info, False, False, False)
             if not (configs and "merge_info" in configs):
                 gr.Warning("Could not find merge info in the selected file.")
@@ -528,7 +562,7 @@ class GalleryPlugin(WAN2GPPlugin):
         
         return { 
             self.join_interface: gr.Column(visible=True), 
-            self.frame_preview_row: gr.Row(visible=False), 
+            self.preview_row: gr.Column(visible=False), 
             self.merge_info_display: gr.Column(visible=False),
             self.metadata_panel_output: gr.HTML(visible=False),
             self.send_to_generator_settings_btn: gr.Button(visible=False),
