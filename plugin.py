@@ -345,13 +345,19 @@ class GalleryPlugin(WAN2GPPlugin):
         image_save_path = self.server_config.get("image_save_path", "outputs")
         paths = {save_path, image_save_path}
         all_files = []
+        seen_files = set() # Set for tracking previously viewed files
         
         for path in paths:
             if os.path.isdir(path) and os.path.exists(path):
                 for root, _, files in os.walk(path):
                     for f in files:
                         if self.has_video_file_extension(f) or self.has_image_file_extension(f):
-                            all_files.append(os.path.join(root, f))
+                            full_path = os.path.join(root, f)
+                            normalized_path = os.path.normpath(os.path.abspath(full_path))
+                            # Normalize the path to avoid duplicates
+                            if normalized_path not in seen_files:
+                                seen_files.add(normalized_path)
+                                all_files.append(full_path)
                             
         all_files.sort(key=os.path.getctime, reverse=True)
         thumbnails_dict = get_thumbnails_in_batch_windows([os.path.abspath(f) for f in all_files])
@@ -609,4 +615,5 @@ class GalleryPlugin(WAN2GPPlugin):
             self.image_prompt_type_endcheckbox: gr.Checkbox(value=True),
             self.plugin_data: {"merge_info": merge_info}
         }
+
 
