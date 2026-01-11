@@ -234,6 +234,8 @@ class GalleryPlugin(WAN2GPPlugin):
             gallery_blocks.load(fn=None, js=js)
             with gr.Column(elem_id="gallery_tab_container"):
                 with gr.Row():
+                    self.delete_files_btn = gr.Button("Delete selected File", variant="stop")  # add new Button delete
+                with gr.Row(): 
                     self.refresh_gallery_files_btn = gr.Button("Refresh Files")
                 with gr.Row(elem_id="gallery-layout"):
                     self.gallery_html_output = gr.HTML(value="<div class='gallery-grid'><p class='placeholder'>Click 'Refresh Files' to load gallery.</p></div>", elem_id="gallery-container")
@@ -298,6 +300,13 @@ class GalleryPlugin(WAN2GPPlugin):
         )
 
         self.refresh_gallery_files_btn.click(fn=self.list_output_files_as_html, inputs=[self.state], outputs=outputs_list)
+        # Add delete function
+        self.delete_files_btn.click(
+            fn=self.delete_selected_files,
+            inputs=[self.selected_files_for_backend, self.state],
+            outputs=outputs_list,
+            show_progress="hidden"
+        )        
         
         self.selected_files_for_backend.change(fn=self.update_metadata_panel_and_buttons, 
             inputs=[self.selected_files_for_backend, self.state], 
@@ -340,6 +349,50 @@ class GalleryPlugin(WAN2GPPlugin):
 
         return gallery_blocks
         
+    # Add new delete function
+    def delete_selected_files(self, selection_str, current_state):
+        """Löscht ausgewählte Dateien aus dem output_folder"""
+        if not selection_str:
+            gr.Warning("No files selected for deletion.")
+            return self.list_output_files_as_html(current_state)
+        
+        file_paths = selection_str.split('||')
+        deleted_count = 0
+        failed_count = 0
+        
+        for file_path in file_paths:
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    deleted_count += 1
+                    
+                    # Attempts to delete associated metadata files
+                    base_path = os.path.splitext(file_path)[0]
+                    metadata_extensions = ['.txt', '.json', '.metadata']
+                    
+                    for ext in metadata_extensions:
+                        metadata_path = base_path + ext
+                        if os.path.exists(metadata_path):
+                            try:
+                                os.remove(metadata_path)
+                            except Exception as e:
+                                print(f"Could not delete metadata file {metadata_path}: {e}")
+                else:
+                    failed_count += 1
+                    print(f"File not found: {file_path}")
+            except Exception as e:
+                failed_count += 1
+                print(f"Error deleting file {file_path}: {e}")
+        
+        if deleted_count > 0:
+            gr.Info(f"Successfully deleted {deleted_count} file(s).")
+        
+        if failed_count > 0:
+            gr.Warning(f"Failed to delete {failed_count} file(s).")
+        
+        # Reload gallery
+        return self.list_output_files_as_html(current_state)
+                
     def list_output_files_as_html(self, current_state):
         save_path = self.server_config.get("save_path", "outputs")
         image_save_path = self.server_config.get("image_save_path", "outputs")
@@ -615,5 +668,6 @@ class GalleryPlugin(WAN2GPPlugin):
             self.image_prompt_type_endcheckbox: gr.Checkbox(value=True),
             self.plugin_data: {"merge_info": merge_info}
         }
+
 
 
