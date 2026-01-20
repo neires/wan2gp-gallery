@@ -68,14 +68,14 @@ class GalleryPlugin(WAN2GPPlugin):
                 overflow-y: auto; 
                 border: 1px solid #e0e0e0; 
                 padding: 10px; 
-                background-color: #f9f9f9; 
+                background-color: #1f2937; 
                 border-radius: 8px; 
             }
             #metadata-panel-container { 
                 flex: 1; 
                 border: 1px solid #e0e0e0; 
                 padding: 15px; 
-                background-color: #ffffff; 
+                background-color: #1f2937; 
                 border-radius: 8px;
             }
 
@@ -83,9 +83,9 @@ class GalleryPlugin(WAN2GPPlugin):
             .gallery-item { position: relative; cursor: pointer; border: 2px solid transparent; border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 5; display: flex; flex-direction: column; background-color: #ffffff; transition: all 0.2s ease-in-out; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
             .gallery-item:hover { border-color: #a0a0a0; transform: translateY(-2px); }
             .gallery-item.selected { border-color: var(--primary-500); box-shadow: 0 0 0 3px var(--primary-200); }
-            .gallery-item-thumbnail { flex-grow: 1; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+            .gallery-item-thumbnail { flex-grow: 1; background-color: #1f2937; display: flex; align-items: center; justify-content: center; overflow: hidden; }
             .gallery-item-thumbnail img, .gallery-item-thumbnail video { width: 100%; height: 100%; object-fit: contain; }
-            .gallery-item-name { padding: 4px 8px; font-size: 12px; text-align: center; background-color: #f8f9fa; white-space: normal; word-break: break-word; border-top: 1px solid #ddd; min-height: 3.2em; display: flex; align-items: center; justify-content: center; }
+            .gallery-item-name { padding: 4px 8px; font-size: 12px; text-align: center; background-color: #1f2937; white-space: normal; word-break: break-word; border-top: 1px solid #ddd; min-height: 3.2em; display: flex; align-items: center; justify-content: center; }
             .metadata-content { font-family: monospace; font-size: 13px; line-height: 1.6; word-wrap: break-word; }
             .metadata-content b { color: var(--primary-500); }
             .metadata-content hr { border: 0; border-top: 1px solid #e0e0e0; margin: 8px 0; }
