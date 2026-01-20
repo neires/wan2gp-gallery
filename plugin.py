@@ -10,9 +10,9 @@ from .gallery_utils import get_thumbnails_in_batch_windows
 class GalleryPlugin(WAN2GPPlugin):
     def __init__(self):
         super().__init__()
-        self.name = "File Gallery"
-        self.version = "1.0.2"
-        self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, and more"
+        self.name = "File Gallery 2"
+        self.version = "2.0.1"
+        self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, mod by nutcracker --> delete items, send curent frame to inputs <-- and more"
         self.loaded_once = False
 
     def setup_ui(self):
@@ -169,6 +169,15 @@ class GalleryPlugin(WAN2GPPlugin):
                     sliderContainer.addEventListener('mouseup', handleInteractionEnd);
                     sliderContainer.addEventListener('touchend', handleInteractionEnd);
                 }
+                
+                window.captureCurrentVideoTime = function(videoId, hiddenInputId) {
+                    const video = document.querySelector(`#${videoId} video`);
+                    const hiddenInput = document.querySelector(`#${hiddenInputId} textarea`);
+                    if (video && hiddenInput) {
+                        hiddenInput.value = video.currentTime.toString();
+                        hiddenInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                };
 
                 function setupScopedObserver(observerName, rootSelector, targetSelector, callback) {
                     if (!window.scopedObservers) {
@@ -244,8 +253,12 @@ class GalleryPlugin(WAN2GPPlugin):
                         self.join_videos_btn = gr.Button("Join 2 Selected Videos", interactive=False, visible=False)
                         self.recreate_join_btn = gr.Button("Recreate Join From This Video", visible=False, interactive=False)
                         with gr.Column(visible=False) as self.preview_row:
-                            self.video_preview = gr.Video(label="Preview", interactive=True, height=250, visible=False)
+                            self.video_preview = gr.Video(label="Preview", interactive=True, height=250, visible=False, elem_id="main_video_preview")
                             self.image_preview = gr.Image(label="Preview", interactive=False, height=250, visible=False)
+                            # Neue Buttons für Current Frame
+                            with gr.Row(visible=False) as self.current_frame_buttons_row:
+                                self.use_as_start_btn = gr.Button("Use as Start-Image", variant="primary")
+                                self.use_as_end_btn = gr.Button("Use as End-Image", variant="primary")                            
                             with gr.Row(visible=False) as self.frame_preview_row:
                                 self.first_frame_preview = gr.Image(label="First Frame", interactive=False, height=150)
                                 self.last_frame_preview = gr.Image(label="Last Frame", interactive=False, height=150)
@@ -278,12 +291,13 @@ class GalleryPlugin(WAN2GPPlugin):
                                 self.cancel_join_btn = gr.Button("Cancel")
                 self.selected_files_for_backend = gr.Text(label="Selected Files", visible=False, elem_id="selected-files-backend")
                 self.path_for_settings_loader = gr.Text(label="Path for Settings Loader", visible=False)
+                self.current_selected_video_path = gr.Text(visible=False)
 
         outputs_list = [
             self.gallery_html_output, self.selected_files_for_backend, self.metadata_panel_output, 
             self.join_videos_btn, self.send_to_generator_settings_btn, self.preview_row, 
             self.video_preview, self.image_preview, self.frame_preview_row, self.first_frame_preview, self.last_frame_preview, 
-            self.join_interface, self.recreate_join_btn, self.merge_info_display
+            self.join_interface, self.recreate_join_btn, self.merge_info_display, self.current_frame_buttons_row
         ]
         no_updates = {comp: gr.update() for comp in outputs_list}
 
@@ -315,9 +329,34 @@ class GalleryPlugin(WAN2GPPlugin):
                 self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview, 
                 self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
                 self.join_interface, self.recreate_join_btn, self.merge_info_display,
-                self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image
+                self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image,
+                self.current_frame_buttons_row, self.current_selected_video_path
             ], show_progress="hidden"
         )
+        
+        # Neue Event-Handler für Current Frame Buttons
+        self.use_as_start_btn.click(
+            fn=self.use_current_frame_as_start,
+            inputs=[self.current_selected_video_path],
+            outputs=[self.image_start, self.main_tabs, self.image_start_row, self.image_prompt_type_radio],
+            js="""(video_path) => { 
+                const video = document.querySelector('#main_video_preview video'); 
+                const time = video ? video.currentTime : 0;
+                return [video_path + '|||' + time];
+            }"""
+        )
+        
+        self.use_as_end_btn.click(
+            fn=self.use_current_frame_as_end,
+            inputs=[self.current_selected_video_path],
+            outputs=[self.image_end, self.main_tabs, self.image_end_row, self.image_prompt_type_endcheckbox],
+            js="""(video_path) => { 
+                const video = document.querySelector('#main_video_preview video'); 
+                const time = video ? video.currentTime : 0;
+                return [video_path + '|||' + time];
+            }"""
+        )
+
         self.join_videos_btn.click(fn=self.show_join_interface, inputs=[self.selected_files_for_backend, self.state], outputs=[
             self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
             self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
@@ -343,12 +382,79 @@ class GalleryPlugin(WAN2GPPlugin):
                 self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview,
                 self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
                 self.join_interface, self.recreate_join_btn, self.merge_info_display,
-                self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image
+                self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image,
+                self.current_frame_buttons_row, self.current_selected_video_path
             ]
         )
 
         return gallery_blocks
+    
+    def use_current_frame_as_start(self, video_path_with_time):
+        """Extrahiert Frame an aktueller Position und setzt als Start-Image"""
+        print(f"Debug: video_path_with_time={video_path_with_time}")
         
+        if not video_path_with_time or '|||' not in video_path_with_time:
+            gr.Warning("No video selected or invalid data.")
+            return gr.update(), gr.update(), gr.update(), gr.update()
+        
+        try:
+            video_path, current_time_str = video_path_with_time.split('|||')
+            current_time = float(current_time_str)
+            
+            print(f"Debug parsed: video_path={video_path}, time={current_time}")
+            
+            fps, _, _, _ = self.get_video_info(video_path)
+            frame_number = int(current_time * fps)
+            current_frame = self.get_video_frame(video_path, frame_number, return_PIL=True)
+            
+            gr.Info(f"Current frame (frame {frame_number + 1}) set as Start-Image.")
+            
+            return {
+                self.image_start: [(current_frame, "Current Frame")],
+                self.main_tabs: gr.Tabs(selected="video_gen"),
+                self.image_start_row: gr.Row(visible=True),
+                self.image_prompt_type_radio: gr.Radio(value="S")
+            }
+        except Exception as e:
+            print(f"Error in use_current_frame_as_start: {e}")
+            import traceback
+            traceback.print_exc()
+            gr.Warning(f"Error extracting frame: {e}")
+            return gr.update(), gr.update(), gr.update(), gr.update()
+    
+    def use_current_frame_as_end(self, video_path_with_time):
+        """Extrahiert Frame an aktueller Position und setzt als End-Image"""
+        print(f"Debug: video_path_with_time={video_path_with_time}")
+        
+        if not video_path_with_time or '|||' not in video_path_with_time:
+            gr.Warning("No video selected or invalid data.")
+            return gr.update(), gr.update(), gr.update(), gr.update()
+        
+        try:
+            video_path, current_time_str = video_path_with_time.split('|||')
+            current_time = float(current_time_str)
+            
+            print(f"Debug parsed: video_path={video_path}, time={current_time}")
+            
+            fps, _, _, _ = self.get_video_info(video_path)
+            frame_number = int(current_time * fps)
+            current_frame = self.get_video_frame(video_path, frame_number, return_PIL=True)
+            
+            gr.Info(f"Current frame (frame {frame_number + 1}) set as End-Image.")
+            
+            return {
+                self.image_end: [(current_frame, "Current Frame")],
+                self.main_tabs: gr.Tabs(selected="video_gen"),
+                self.image_end_row: gr.Row(visible=True),
+                self.image_prompt_type_endcheckbox: gr.Checkbox(value=True)
+            }
+        except Exception as e:
+            print(f"Error in use_current_frame_as_end: {e}")
+            import traceback
+            traceback.print_exc()
+            gr.Warning(f"Error extracting frame: {e}")
+            return gr.update(), gr.update(), gr.update(), gr.update()
+            
     # Add new delete function
     def delete_selected_files(self, selection_str, current_state):
         """Löscht ausgewählte Dateien aus dem output_folder"""
@@ -447,7 +553,8 @@ class GalleryPlugin(WAN2GPPlugin):
             self.first_frame_preview: gr.Image(value=None),
             self.last_frame_preview: gr.Image(value=None),
             self.join_interface: gr.Column(visible=False),
-            self.merge_info_display: gr.Column(visible=False)
+            self.merge_info_display: gr.Column(visible=False),
+            self.current_frame_buttons_row: gr.Row(visible=False)
         }
 
     def add_merge_info_to_metadata(self, configs, plugin_data, **kwargs):
@@ -502,7 +609,9 @@ class GalleryPlugin(WAN2GPPlugin):
             self.merge_source1_prompt: gr.Markdown(value=""),
             self.merge_source1_image: gr.Image(value=None),
             self.merge_source2_prompt: gr.Markdown(value=""),
-            self.merge_source2_image: gr.Image(value=None)
+            self.merge_source2_image: gr.Image(value=None),
+            self.current_frame_buttons_row: gr.Row(visible=False),
+            self.current_selected_video_path: ""
         }
 
         if len(file_paths) == 1:
@@ -540,6 +649,8 @@ class GalleryPlugin(WAN2GPPlugin):
                 updates[self.preview_row] = gr.Column(visible=True)
                 if self.has_video_file_extension(file_path):
                     updates[self.video_preview] = gr.Video(value=file_path, visible=True)
+                    updates[self.current_frame_buttons_row] = gr.Row(visible=True)
+                    updates[self.current_selected_video_path] = file_path
                     updates[self.frame_preview_row] = gr.Row(visible=True)
                     first_frame_pil = self.get_video_frame(file_path, 0, return_PIL=True)
                     _, _, _, frame_count = self.get_video_info(file_path)
