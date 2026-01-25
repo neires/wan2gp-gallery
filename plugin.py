@@ -10,9 +10,9 @@ from .gallery_utils import get_thumbnails_in_batch_windows
 class GalleryPlugin(WAN2GPPlugin):
     def __init__(self):
         super().__init__()
-        self.name = "File Gallery 2"
-        self.version = "2.0.1"
-        self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, mod by nutcracker --> delete items, send curent frame to inputs <-- and more"
+        self.name = "File Gallery"
+        self.version = "1.0.3"
+        self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, and more"
         self.loaded_once = False
 
     def setup_ui(self):
@@ -60,37 +60,108 @@ class GalleryPlugin(WAN2GPPlugin):
                 display: flex; 
                 gap: 16px; 
                 min-height: 75vh; 
-                align-items: flex-start; /* Align both columns to the top */
+                align-items: flex-start;
             }
             #gallery-container { 
                 flex: 3; 
                 max-height: 80vh; 
                 overflow-y: auto; 
-                border: 1px solid #e0e0e0; 
+                border: 1px solid var(--border-color-primary); 
                 padding: 10px; 
-                background-color: #1f2937; 
+                background-color: var(--background-fill-secondary); 
                 border-radius: 8px; 
             }
             #metadata-panel-container { 
                 flex: 1; 
-                border: 1px solid #e0e0e0; 
+                border: 1px solid var(--border-color-primary); 
                 padding: 15px; 
-                background-color: #1f2937; 
+                background-color: var(--background-fill-primary); 
                 border-radius: 8px;
             }
 
             .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 16px; }
-            .gallery-item { position: relative; cursor: pointer; border: 2px solid transparent; border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 5; display: flex; flex-direction: column; background-color: #ffffff; transition: all 0.2s ease-in-out; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-            .gallery-item:hover { border-color: #a0a0a0; transform: translateY(-2px); }
-            .gallery-item.selected { border-color: var(--primary-500); box-shadow: 0 0 0 3px var(--primary-200); }
-            .gallery-item-thumbnail { flex-grow: 1; background-color: #1f2937; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-            .gallery-item-thumbnail img, .gallery-item-thumbnail video { width: 100%; height: 100%; object-fit: contain; }
-            .gallery-item-name { padding: 4px 8px; font-size: 12px; text-align: center; background-color: #1f2937; white-space: normal; word-break: break-word; border-top: 1px solid #ddd; min-height: 3.2em; display: flex; align-items: center; justify-content: center; }
-            .metadata-content { font-family: monospace; font-size: 13px; line-height: 1.6; word-wrap: break-word; }
-            .metadata-content b { color: var(--primary-500); }
-            .metadata-content hr { border: 0; border-top: 1px solid #e0e0e0; margin: 8px 0; }
-            .metadata-content .placeholder { color: #999; text-align: center; margin-top: 20px; font-style: italic; }
-            #video_info, #video_info TR, #video_info TD { background-color: transparent; color: inherit; padding: 4px; border:0px !important; font-size:12px; }
+            .gallery-item { 
+                position: relative; 
+                cursor: pointer; 
+                border: 2px solid transparent; 
+                border-radius: 8px; 
+                overflow: hidden; 
+                aspect-ratio: 4 / 5; 
+                display: flex; 
+                flex-direction: column; 
+                background-color: var(--background-fill-primary); 
+                transition: all 0.2s ease-in-out; 
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1); 
+            }
+            .gallery-item:hover { 
+                border-color: var(--border-color-accent); 
+                transform: translateY(-2px); 
+            }
+            .gallery-item.selected { 
+                border-color: var(--primary-500); 
+                box-shadow: 0 0 0 3px var(--primary-200); 
+            }
+            .gallery-item-thumbnail { 
+                flex-grow: 1; 
+                background-color: var(--panel-background-fill); 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                overflow: hidden; 
+            }
+            .gallery-item-thumbnail img, .gallery-item-thumbnail video { 
+                width: 100%; 
+                height: 100%; 
+                object-fit: contain; 
+            }
+            .gallery-item-name { 
+                padding: 4px 8px; 
+                font-size: 12px; 
+                text-align: center; 
+                background-color: var(--panel-background-fill); 
+                color: var(--body-text-color);
+                white-space: normal; 
+                word-break: break-word; 
+                border-top: 1px solid var(--border-color-primary); 
+                min-height: 3.2em; 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+            }
+            .metadata-content { 
+                font-family: monospace; 
+                font-size: 13px; 
+                line-height: 1.6; 
+                word-wrap: break-word; 
+            }
+            .metadata-content b { 
+                color: var(--primary-500); 
+            }
+            .metadata-content hr { 
+                border: 0; 
+                border-top: 1px solid var(--border-color-primary); 
+                margin: 8px 0; 
+            }
+            .metadata-content .placeholder { 
+                color: var(--body-text-color-subdued); 
+                text-align: center; 
+                margin-top: 20px; 
+                font-style: italic; 
+            }
+            #video_info, #video_info TR, #video_info TD { 
+                background-color: transparent; 
+                color: inherit; 
+                padding: 4px; 
+                border: 0px !important; 
+                font-size: 12px; 
+            }
+            #custom-button {
+                font-size: 13px;
+                padding: 3px 8px !important;
+            }
+            #stop-button:hover {
+            background: #ff3333 !important;
+            }
         """
         js = """
             function() {
@@ -169,7 +240,7 @@ class GalleryPlugin(WAN2GPPlugin):
                     sliderContainer.addEventListener('mouseup', handleInteractionEnd);
                     sliderContainer.addEventListener('touchend', handleInteractionEnd);
                 }
-                
+
                 window.captureCurrentVideoTime = function(videoId, hiddenInputId) {
                     const video = document.querySelector(`#${videoId} video`);
                     const hiddenInput = document.querySelector(`#${hiddenInputId} textarea`);
@@ -190,7 +261,6 @@ class GalleryPlugin(WAN2GPPlugin):
                     const startObserving = () => {
                         const rootElement = document.querySelector(rootSelector);
                         if (!rootElement) {
-                            // Retry if the root element isn't available yet (e.g., during Gradio startup).
                             setTimeout(startObserving, 250);
                             return;
                         }
@@ -243,13 +313,11 @@ class GalleryPlugin(WAN2GPPlugin):
             gallery_blocks.load(fn=None, js=js)
             with gr.Column(elem_id="gallery_tab_container"):
                 with gr.Row():
-                    self.delete_files_btn = gr.Button("Delete selected File", variant="stop")  # add new Button delete
-                with gr.Row(): 
-                    self.refresh_gallery_files_btn = gr.Button("Refresh Files")
+                    self.refresh_gallery_files_btn = gr.Button("Refresh Files")                   
+                    self.delete_files_btn = gr.Button("Delete selected File", elem_id="stop-button")  # add new Button delete
                 with gr.Row(elem_id="gallery-layout"):
                     self.gallery_html_output = gr.HTML(value="<div class='gallery-grid'><p class='placeholder'>Click 'Refresh Files' to load gallery.</p></div>", elem_id="gallery-container")
                     with gr.Column(elem_id="metadata-panel-container"):
-                        self.send_to_generator_settings_btn = gr.Button("Use Settings in Generator", interactive=False, visible=False)
                         self.join_videos_btn = gr.Button("Join 2 Selected Videos", interactive=False, visible=False)
                         self.recreate_join_btn = gr.Button("Recreate Join From This Video", visible=False, interactive=False)
                         with gr.Column(visible=False) as self.preview_row:
@@ -257,8 +325,9 @@ class GalleryPlugin(WAN2GPPlugin):
                             self.image_preview = gr.Image(label="Preview", interactive=False, height=250, visible=False)
                             # Neue Buttons für Current Frame
                             with gr.Row(visible=False) as self.current_frame_buttons_row:
-                                self.use_as_start_btn = gr.Button("Use as Start-Image", variant="primary")
-                                self.use_as_end_btn = gr.Button("Use as End-Image", variant="primary")                            
+                                self.use_as_start_btn = gr.Button("⬆️ as Start-Image", variant="primary", elem_id="custom-button")
+                                self.use_as_end_btn = gr.Button("as End-Image ⬆️", variant="primary", elem_id="custom-button")            
+                                self.send_to_generator_settings_btn = gr.Button("Use Settings in Generator", interactive=False, visible=False)
                             with gr.Row(visible=False) as self.frame_preview_row:
                                 self.first_frame_preview = gr.Image(label="First Frame", interactive=False, height=150)
                                 self.last_frame_preview = gr.Image(label="Last Frame", interactive=False, height=150)
@@ -301,6 +370,14 @@ class GalleryPlugin(WAN2GPPlugin):
         ]
         no_updates = {comp: gr.update() for comp in outputs_list}
 
+        outputs_list = [
+            self.gallery_html_output, self.selected_files_for_backend, self.metadata_panel_output, 
+            self.join_videos_btn, self.send_to_generator_settings_btn, self.preview_row, 
+            self.video_preview, self.image_preview, self.frame_preview_row, self.first_frame_preview, self.last_frame_preview, 
+            self.join_interface, self.recreate_join_btn, self.merge_info_display, self.current_frame_buttons_row
+        ]
+        no_updates = {comp: gr.update() for comp in outputs_list}
+
         def on_tab_select(current_state, evt: gr.SelectData):
             if evt.value == "Gallery" and not self.loaded_once:
                 self.loaded_once = True
@@ -314,7 +391,7 @@ class GalleryPlugin(WAN2GPPlugin):
         )
 
         self.refresh_gallery_files_btn.click(fn=self.list_output_files_as_html, inputs=[self.state], outputs=outputs_list)
-        # Add delete function
+        
         self.delete_files_btn.click(
             fn=self.delete_selected_files,
             inputs=[self.selected_files_for_backend, self.state],
@@ -356,7 +433,7 @@ class GalleryPlugin(WAN2GPPlugin):
                 return [video_path + '|||' + time];
             }"""
         )
-
+        
         self.join_videos_btn.click(fn=self.show_join_interface, inputs=[self.selected_files_for_backend, self.state], outputs=[
             self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
             self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
@@ -454,8 +531,7 @@ class GalleryPlugin(WAN2GPPlugin):
             traceback.print_exc()
             gr.Warning(f"Error extracting frame: {e}")
             return gr.update(), gr.update(), gr.update(), gr.update()
-            
-    # Add new delete function
+        
     def delete_selected_files(self, selection_str, current_state):
         """Löscht ausgewählte Dateien aus dem output_folder"""
         if not selection_str:
@@ -472,7 +548,6 @@ class GalleryPlugin(WAN2GPPlugin):
                     os.remove(file_path)
                     deleted_count += 1
                     
-                    # Attempts to delete associated metadata files
                     base_path = os.path.splitext(file_path)[0]
                     metadata_extensions = ['.txt', '.json', '.metadata']
                     
@@ -496,7 +571,6 @@ class GalleryPlugin(WAN2GPPlugin):
         if failed_count > 0:
             gr.Warning(f"Failed to delete {failed_count} file(s).")
         
-        # Reload gallery
         return self.list_output_files_as_html(current_state)
                 
     def list_output_files_as_html(self, current_state):
@@ -504,7 +578,7 @@ class GalleryPlugin(WAN2GPPlugin):
         image_save_path = self.server_config.get("image_save_path", "outputs")
         paths = {save_path, image_save_path}
         all_files = []
-        seen_files = set() # Set for tracking previously viewed files
+        seen_files = set()
         
         for path in paths:
             if os.path.isdir(path) and os.path.exists(path):
@@ -513,7 +587,6 @@ class GalleryPlugin(WAN2GPPlugin):
                         if self.has_video_file_extension(f) or self.has_image_file_extension(f):
                             full_path = os.path.join(root, f)
                             normalized_path = os.path.normpath(os.path.abspath(full_path))
-                            # Normalize the path to avoid duplicates
                             if normalized_path not in seen_files:
                                 seen_files.add(normalized_path)
                                 all_files.append(full_path)
@@ -715,7 +788,7 @@ class GalleryPlugin(WAN2GPPlugin):
                 return {}
             vid1_path, vid2_path = vid1_abs, vid2_abs
             frame1_num, frame2_num = merge_info['source_video_1']['frame_used'], merge_info['source_video_2']['frame_used']
-        elif isinstance(file_info, list) and len(file_info) == 2: # Called from 2 selected videos
+        elif isinstance(file_info, list) and len(file_info) == 2:
             vid1_path, vid2_path = file_info[0], file_info[1]
             _, _, _, v1_frames = self.get_video_info(vid1_path)
             frame1_num, frame2_num = v1_frames, 1
@@ -779,6 +852,3 @@ class GalleryPlugin(WAN2GPPlugin):
             self.image_prompt_type_endcheckbox: gr.Checkbox(value=True),
             self.plugin_data: {"merge_info": merge_info}
         }
-
-
-
