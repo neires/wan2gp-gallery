@@ -7,11 +7,12 @@ import gc
 
 from .gallery_utils import get_thumbnails_in_batch_windows
 
+
 class GalleryPlugin(WAN2GPPlugin):
     def __init__(self):
         super().__init__()
-        self.name = "File Gallery"
-        self.version = "1.0.3"
+        self.name = "File Gallery 2"
+        self.version = "2.0.1"
         self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, and more"
         self.loaded_once = False
 
@@ -53,119 +54,123 @@ class GalleryPlugin(WAN2GPPlugin):
         self.request_component("image_prompt_type_endcheckbox")
         self.request_component("plugin_data")
         self.register_data_hook("before_metadata_save", self.add_merge_info_to_metadata)
-        
+
     def create_gallery_ui(self):
         css = """
-            #gallery-layout { 
-                display: flex; 
-                gap: 16px; 
-                min-height: 75vh; 
+            #gallery-layout {
+                display: flex;
+                gap: 16px;
+                min-height: 75vh;
                 align-items: flex-start;
             }
-            #gallery-container { 
-                flex: 3; 
-                max-height: 80vh; 
-                overflow-y: auto; 
-                border: 1px solid var(--border-color-primary); 
-                padding: 10px; 
-                background-color: var(--background-fill-secondary); 
-                border-radius: 8px; 
+            #gallery-container {
+                flex: 3;
+                max-height: 80vh;
+                overflow-y: auto;
+                border: 1px solid var(--border-color-primary);
+                padding: 10px;
+                background-color: var(--background-fill-secondary);
+                border-radius: 8px;
             }
-            #metadata-panel-container { 
-                flex: 1; 
-                border: 1px solid var(--border-color-primary); 
-                padding: 15px; 
-                background-color: var(--background-fill-primary); 
+            #metadata-panel-container {
+                flex: 1;
+                border: 1px solid var(--border-color-primary);
+                padding: 15px;
+                background-color: var(--background-fill-primary);
                 border-radius: 8px;
             }
 
             .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 16px; }
-            .gallery-item { 
-                position: relative; 
-                cursor: pointer; 
-                border: 2px solid transparent; 
-                border-radius: 8px; 
-                overflow: hidden; 
-                aspect-ratio: 4 / 5; 
-                display: flex; 
-                flex-direction: column; 
-                background-color: var(--background-fill-primary); 
-                transition: all 0.2s ease-in-out; 
-                box-shadow: 0 1px 3px rgba(0,0,0,0.1); 
+            .gallery-item {
+                position: relative;
+                cursor: pointer;
+                border: 2px solid transparent;
+                border-radius: 8px;
+                overflow: hidden;
+                aspect-ratio: 4 / 5;
+                display: flex;
+                flex-direction: column;
+                background-color: var(--background-fill-primary);
+                transition: all 0.2s ease-in-out;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             }
-            .gallery-item:hover { 
-                border-color: var(--border-color-accent); 
-                transform: translateY(-2px); 
+            .gallery-item:hover {
+                border-color: var(--border-color-accent);
+                transform: translateY(-2px);
             }
-            .gallery-item.selected { 
-                border-color: var(--primary-500); 
-                box-shadow: 0 0 0 3px var(--primary-200); 
+            .gallery-item.selected {
+                border-color: var(--primary-500);
+                box-shadow: 0 0 0 3px var(--primary-200);
             }
-            .gallery-item-thumbnail { 
-                flex-grow: 1; 
-                background-color: var(--panel-background-fill); 
-                display: flex; 
-                align-items: center; 
-                justify-content: center; 
-                overflow: hidden; 
+            .gallery-item-thumbnail {
+                flex-grow: 1;
+                background-color: var(--panel-background-fill);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                overflow: hidden;
             }
-            .gallery-item-thumbnail img, .gallery-item-thumbnail video { 
-                width: 100%; 
-                height: 100%; 
-                object-fit: contain; 
+            .gallery-item-thumbnail img, .gallery-item-thumbnail video {
+                width: 100%;
+                height: 100%;
+                object-fit: contain;
             }
-            .gallery-item-name { 
-                padding: 4px 8px; 
-                font-size: 12px; 
-                text-align: center; 
-                background-color: var(--panel-background-fill); 
+            .gallery-item-name {
+                padding: 4px 8px;
+                font-size: 12px;
+                text-align: center;
+                background-color: var(--panel-background-fill);
                 color: var(--body-text-color);
-                white-space: normal; 
-                word-break: break-word; 
-                border-top: 1px solid var(--border-color-primary); 
-                min-height: 3.2em; 
-                display: flex; 
-                align-items: center; 
-                justify-content: center; 
+                white-space: normal;
+                word-break: break-word;
+                border-top: 1px solid var(--border-color-primary);
+                min-height: 3.2em;
+                display: flex;
+                align-items: center;
+                justify-content: center;
             }
-            .metadata-content { 
-                font-family: monospace; 
-                font-size: 13px; 
-                line-height: 1.6; 
-                word-wrap: break-word; 
+            .metadata-content {
+                font-family: monospace;
+                font-size: 13px;
+                line-height: 1.6;
+                word-wrap: break-word;
             }
-            .metadata-content b { 
-                color: var(--primary-500); 
+            .metadata-content b {
+                color: var(--primary-500);
             }
-            .metadata-content hr { 
-                border: 0; 
-                border-top: 1px solid var(--border-color-primary); 
-                margin: 8px 0; 
+            .metadata-content hr {
+                border: 0;
+                border-top: 1px solid var(--border-color-primary);
+                margin: 8px 0;
             }
-            .metadata-content .placeholder { 
-                color: var(--body-text-color-subdued); 
-                text-align: center; 
-                margin-top: 20px; 
-                font-style: italic; 
+            .metadata-content .placeholder {
+                color: var(--body-text-color-subdued);
+                text-align: center;
+                margin-top: 20px;
+                font-style: italic;
             }
-            #video_info, #video_info TR, #video_info TD { 
-                background-color: transparent; 
-                color: inherit; 
-                padding: 4px; 
-                border: 0px !important; 
-                font-size: 12px; 
+            #video_info, #video_info TR, #video_info TD {
+                background-color: transparent;
+                color: inherit;
+                padding: 4px;
+                border: 0px !important;
+                font-size: 12px;
             }
             #custom-button {
                 font-size: 13px;
                 padding: 3px 8px !important;
             }
             #stop-button:hover {
-            background: #ff3333 !important;
+                background: #ff3333 !important;
             }
         """
+
         js = """
             function() {
                 window.selectGalleryItem = function(event, element) {
+                    // Ordner sollen nicht selektiert werden
+                    if (element.classList.contains('gallery-folder')) return;
+
                     const gallery = element.closest('.gallery-grid');
                     const selectedFilesInput = document.querySelector('#selected-files-backend textarea');
                     if (!gallery || !selectedFilesInput) { return; }
@@ -180,7 +185,27 @@ class GalleryPlugin(WAN2GPPlugin):
                     selectedFilesInput.value = selectedPaths.join('||');
                     selectedFilesInput.dispatchEvent(new Event('input', { bubbles: true }));
                 };
-                
+
+                // Doppelklick auf Ordner: navigieren
+                window.openGalleryFolder = function(event, element) {
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    const dirInput = document.querySelector('#current-gallery-dir textarea');
+                    const selectedFilesInput = document.querySelector('#selected-files-backend textarea');
+                    if (!dirInput) return;
+
+                    const targetPath = element.dataset.path;
+                    dirInput.value = targetPath || "";
+                    dirInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+                    // Auswahl leeren
+                    if (selectedFilesInput) {
+                        selectedFilesInput.value = "";
+                        selectedFilesInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                };
+
                 function setupVideoFrameSeeker(containerId, sliderId, fps) {
                     const container = document.querySelector(`#${containerId}`);
                     const sliderContainer = document.querySelector(`#${sliderId}`);
@@ -202,7 +227,7 @@ class GalleryPlugin(WAN2GPPlugin):
                             video.currentTime = targetTime;
                         }
                     }
-                    
+
                     video.addEventListener('loadedmetadata', () => {
                         const sliderInput = sliderContainer.querySelector('input[type="range"]');
                         if (sliderInput) setTimeout(() => updateVideoToFrame(parseInt(sliderInput.value, 10)), 100);
@@ -231,11 +256,11 @@ class GalleryPlugin(WAN2GPPlugin):
                             }, 50);
                         }
                     };
-                    
+
                     const handleInteractionEnd = () => {
                         setTimeout(() => { isSeekingFromSlider = false; }, 150);
                     };
-                    
+
                     sliderContainer.addEventListener('input', handleSliderInput);
                     sliderContainer.addEventListener('mouseup', handleInteractionEnd);
                     sliderContainer.addEventListener('touchend', handleInteractionEnd);
@@ -287,7 +312,7 @@ class GalleryPlugin(WAN2GPPlugin):
                         observer.observe(rootElement, { childList: true, subtree: true });
                         window.scopedObservers.set(observerName, observer);
                     };
-                    
+
                     startObserving();
                 }
 
@@ -308,15 +333,19 @@ class GalleryPlugin(WAN2GPPlugin):
                 );
             }
         """
+
         with gr.Blocks() as gallery_blocks:
             gr.HTML(value=f"<style>{css}</style>")
             gallery_blocks.load(fn=None, js=js)
             with gr.Column(elem_id="gallery_tab_container"):
                 with gr.Row():
-                    self.refresh_gallery_files_btn = gr.Button("Refresh Files")                   
+                    self.refresh_gallery_files_btn = gr.Button("Refresh Files")
                     self.delete_files_btn = gr.Button("Delete selected File", elem_id="stop-button")  # add new Button delete
                 with gr.Row(elem_id="gallery-layout"):
-                    self.gallery_html_output = gr.HTML(value="<div class='gallery-grid'><p class='placeholder'>Click 'Refresh Files' to load gallery.</p></div>", elem_id="gallery-container")
+                    self.gallery_html_output = gr.HTML(
+                        value="<div class='gallery-grid'><p class='placeholder'>Click 'Refresh Files' to load gallery.</p></div>",
+                        elem_id="gallery-container"
+                    )
                     with gr.Column(elem_id="metadata-panel-container"):
                         self.join_videos_btn = gr.Button("Join 2 Selected Videos", interactive=False, visible=False)
                         self.recreate_join_btn = gr.Button("Recreate Join From This Video", visible=False, interactive=False)
@@ -326,7 +355,7 @@ class GalleryPlugin(WAN2GPPlugin):
                             # Neue Buttons für Current Frame
                             with gr.Row(visible=False) as self.current_frame_buttons_row:
                                 self.use_as_start_btn = gr.Button("⬆️ as Start-Image", variant="primary", elem_id="custom-button")
-                                self.use_as_end_btn = gr.Button("as End-Image ⬆️", variant="primary", elem_id="custom-button")            
+                                self.use_as_end_btn = gr.Button("as End-Image ⬆️", variant="primary", elem_id="custom-button")
                                 self.send_to_generator_settings_btn = gr.Button("Use Settings in Generator", interactive=False, visible=False)
                             with gr.Row(visible=False) as self.frame_preview_row:
                                 self.first_frame_preview = gr.Image(label="First Frame", interactive=False, height=150)
@@ -358,99 +387,142 @@ class GalleryPlugin(WAN2GPPlugin):
                             with gr.Row():
                                 self.send_to_generator_btn = gr.Button("Send Frames to Generator", variant="primary")
                                 self.cancel_join_btn = gr.Button("Cancel")
+
                 self.selected_files_for_backend = gr.Text(label="Selected Files", visible=False, elem_id="selected-files-backend")
+                # NEU: aktuelles Galerie-Verzeichnis für Navigation
+                self.current_gallery_dir = gr.Text(label="Current Gallery Dir", visible=False, elem_id="current-gallery-dir")
                 self.path_for_settings_loader = gr.Text(label="Path for Settings Loader", visible=False)
                 self.current_selected_video_path = gr.Text(visible=False)
 
         outputs_list = [
-            self.gallery_html_output, self.selected_files_for_backend, self.metadata_panel_output, 
-            self.join_videos_btn, self.send_to_generator_settings_btn, self.preview_row, 
-            self.video_preview, self.image_preview, self.frame_preview_row, self.first_frame_preview, self.last_frame_preview, 
-            self.join_interface, self.recreate_join_btn, self.merge_info_display, self.current_frame_buttons_row
+            self.gallery_html_output,
+            self.selected_files_for_backend,
+            self.metadata_panel_output,
+            self.join_videos_btn,
+            self.send_to_generator_settings_btn,
+            self.preview_row,
+            self.video_preview,
+            self.image_preview,
+            self.frame_preview_row,
+            self.first_frame_preview,
+            self.last_frame_preview,
+            self.join_interface,
+            self.recreate_join_btn,
+            self.merge_info_display,
+            self.current_frame_buttons_row,
+            self.current_gallery_dir,  # NEU: damit list_output_files_as_html den aktuellen Ordner zurücksetzen kann
         ]
         no_updates = {comp: gr.update() for comp in outputs_list}
 
-        outputs_list = [
-            self.gallery_html_output, self.selected_files_for_backend, self.metadata_panel_output, 
-            self.join_videos_btn, self.send_to_generator_settings_btn, self.preview_row, 
-            self.video_preview, self.image_preview, self.frame_preview_row, self.first_frame_preview, self.last_frame_preview, 
-            self.join_interface, self.recreate_join_btn, self.merge_info_display, self.current_frame_buttons_row
-        ]
-        no_updates = {comp: gr.update() for comp in outputs_list}
-
-        def on_tab_select(current_state, evt: gr.SelectData):
+        def on_tab_select(current_state, current_dir, evt: gr.SelectData):
             if evt.value == "Gallery" and not self.loaded_once:
                 self.loaded_once = True
-                return self.list_output_files_as_html(current_state)
+                return self.list_output_files_as_html(current_state, current_dir)
             return no_updates
 
         self.main_tabs.select(
             fn=on_tab_select,
-            inputs=[self.state],
+            inputs=[self.state, self.current_gallery_dir],
             outputs=outputs_list,
         )
 
-        self.refresh_gallery_files_btn.click(fn=self.list_output_files_as_html, inputs=[self.state], outputs=outputs_list)
-        
-        self.delete_files_btn.click(
-            fn=self.delete_selected_files,
-            inputs=[self.selected_files_for_backend, self.state],
+        self.refresh_gallery_files_btn.click(
+            fn=self.list_output_files_as_html,
+            inputs=[self.state, self.current_gallery_dir],
+            outputs=outputs_list
+        )
+
+        # NEU: Navigation bei Änderung des Ordners (wird von JS via Doppelklick gesetzt)
+        self.current_gallery_dir.change(
+            fn=self.list_output_files_as_html,
+            inputs=[self.state, self.current_gallery_dir],
             outputs=outputs_list,
             show_progress="hidden"
-        )        
-        
-        self.selected_files_for_backend.change(fn=self.update_metadata_panel_and_buttons, 
-            inputs=[self.selected_files_for_backend, self.state], 
+        )
+
+        self.delete_files_btn.click(
+            fn=self.delete_selected_files,
+            inputs=[self.selected_files_for_backend, self.state, self.current_gallery_dir],
+            outputs=outputs_list,
+            show_progress="hidden"
+        )
+
+        self.selected_files_for_backend.change(
+            fn=self.update_metadata_panel_and_buttons,
+            inputs=[self.selected_files_for_backend, self.state],
             outputs=[
-                self.join_videos_btn, self.send_to_generator_settings_btn, self.metadata_panel_output, 
-                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview, 
+                self.join_videos_btn, self.send_to_generator_settings_btn, self.metadata_panel_output,
+                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview,
                 self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
                 self.join_interface, self.recreate_join_btn, self.merge_info_display,
                 self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image,
                 self.current_frame_buttons_row, self.current_selected_video_path
-            ], show_progress="hidden"
+            ],
+            show_progress="hidden"
         )
-        
+
         # Neue Event-Handler für Current Frame Buttons
         self.use_as_start_btn.click(
             fn=self.use_current_frame_as_start,
             inputs=[self.current_selected_video_path],
             outputs=[self.image_start, self.main_tabs, self.image_start_row, self.image_prompt_type_radio],
-            js="""(video_path) => { 
-                const video = document.querySelector('#main_video_preview video'); 
+            js="""(video_path) => {
+                const video = document.querySelector('#main_video_preview video');
                 const time = video ? video.currentTime : 0;
                 return [video_path + '|||' + time];
             }"""
         )
-        
+
         self.use_as_end_btn.click(
             fn=self.use_current_frame_as_end,
             inputs=[self.current_selected_video_path],
             outputs=[self.image_end, self.main_tabs, self.image_end_row, self.image_prompt_type_endcheckbox],
-            js="""(video_path) => { 
-                const video = document.querySelector('#main_video_preview video'); 
+            js="""(video_path) => {
+                const video = document.querySelector('#main_video_preview video');
                 const time = video ? video.currentTime : 0;
                 return [video_path + '|||' + time];
             }"""
         )
-        
-        self.join_videos_btn.click(fn=self.show_join_interface, inputs=[self.selected_files_for_backend, self.state], outputs=[
-            self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
-            self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
-            self.video1_preview, self.video2_preview,
-            self.video1_path, self.video2_path, self.video1_frame_slider, self.video2_frame_slider,
-            self.video1_info, self.video2_info
-        ])
+
+        self.join_videos_btn.click(
+            fn=self.show_join_interface,
+            inputs=[self.selected_files_for_backend, self.state],
+            outputs=[
+                self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
+                self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
+                self.video1_preview, self.video2_preview,
+                self.video1_path, self.video2_path, self.video1_frame_slider, self.video2_frame_slider,
+                self.video1_info, self.video2_info
+            ]
+        )
+
         self.recreate_join_btn.click(
-            fn=self.recreate_join_interface, inputs=[self.path_for_settings_loader, self.state], outputs=[
-            self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
-            self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
-            self.video1_preview, self.video2_preview,
-            self.video1_path, self.video2_path, self.video1_frame_slider, self.video2_frame_slider,
-            self.video1_info, self.video2_info
-        ])
-        self.send_to_generator_settings_btn.click(fn=self.load_settings_and_frames_from_gallery, inputs=[self.state, self.path_for_settings_loader], outputs=[self.model_family, self.model_choice, self.main_tabs, self.refresh_form_trigger], show_progress="hidden")
-        self.send_to_generator_btn.click(fn=self.send_selected_frames_to_generator, inputs=[self.video1_path, self.video1_frame_slider, self.video2_path, self.video2_frame_slider, self.image_prompt_type], outputs=[self.image_start, self.image_end, self.main_tabs, self.join_interface, self.image_prompt_type, self.image_start_row, self.image_end_row, self.image_prompt_type_radio, self.image_prompt_type_endcheckbox, self.plugin_data])
+            fn=self.recreate_join_interface,
+            inputs=[self.path_for_settings_loader, self.state],
+            outputs=[
+                self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
+                self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
+                self.video1_preview, self.video2_preview,
+                self.video1_path, self.video2_path, self.video1_frame_slider, self.video2_frame_slider,
+                self.video1_info, self.video2_info
+            ]
+        )
+
+        self.send_to_generator_settings_btn.click(
+            fn=self.load_settings_and_frames_from_gallery,
+            inputs=[self.state, self.path_for_settings_loader],
+            outputs=[self.model_family, self.model_choice, self.main_tabs, self.refresh_form_trigger],
+            show_progress="hidden"
+        )
+
+        self.send_to_generator_btn.click(
+            fn=self.send_selected_frames_to_generator,
+            inputs=[self.video1_path, self.video1_frame_slider, self.video2_path, self.video2_frame_slider, self.image_prompt_type],
+            outputs=[self.image_start, self.image_end, self.main_tabs, self.join_interface, self.image_prompt_type,
+                     self.image_start_row, self.image_end_row, self.image_prompt_type_radio, self.image_prompt_type_endcheckbox,
+                     self.plugin_data]
+        )
+
         self.cancel_join_btn.click(
             fn=self.update_metadata_panel_and_buttons,
             inputs=[self.selected_files_for_backend, self.state],
@@ -465,27 +537,27 @@ class GalleryPlugin(WAN2GPPlugin):
         )
 
         return gallery_blocks
-    
+
     def use_current_frame_as_start(self, video_path_with_time):
         """Extrahiert Frame an aktueller Position und setzt als Start-Image"""
         print(f"Debug: video_path_with_time={video_path_with_time}")
-        
+
         if not video_path_with_time or '|||' not in video_path_with_time:
             gr.Warning("No video selected or invalid data.")
             return gr.update(), gr.update(), gr.update(), gr.update()
-        
+
         try:
             video_path, current_time_str = video_path_with_time.split('|||')
             current_time = float(current_time_str)
-            
+
             print(f"Debug parsed: video_path={video_path}, time={current_time}")
-            
+
             fps, _, _, _ = self.get_video_info(video_path)
             frame_number = int(current_time * fps)
             current_frame = self.get_video_frame(video_path, frame_number, return_PIL=True)
-            
+
             gr.Info(f"Current frame (frame {frame_number + 1}) set as Start-Image.")
-            
+
             return {
                 self.image_start: [(current_frame, "Current Frame")],
                 self.main_tabs: gr.Tabs(selected="video_gen"),
@@ -498,27 +570,27 @@ class GalleryPlugin(WAN2GPPlugin):
             traceback.print_exc()
             gr.Warning(f"Error extracting frame: {e}")
             return gr.update(), gr.update(), gr.update(), gr.update()
-    
+
     def use_current_frame_as_end(self, video_path_with_time):
         """Extrahiert Frame an aktueller Position und setzt als End-Image"""
         print(f"Debug: video_path_with_time={video_path_with_time}")
-        
+
         if not video_path_with_time or '|||' not in video_path_with_time:
             gr.Warning("No video selected or invalid data.")
             return gr.update(), gr.update(), gr.update(), gr.update()
-        
+
         try:
             video_path, current_time_str = video_path_with_time.split('|||')
             current_time = float(current_time_str)
-            
+
             print(f"Debug parsed: video_path={video_path}, time={current_time}")
-            
+
             fps, _, _, _ = self.get_video_info(video_path)
             frame_number = int(current_time * fps)
             current_frame = self.get_video_frame(video_path, frame_number, return_PIL=True)
-            
+
             gr.Info(f"Current frame (frame {frame_number + 1}) set as End-Image.")
-            
+
             return {
                 self.image_end: [(current_frame, "Current Frame")],
                 self.main_tabs: gr.Tabs(selected="video_gen"),
@@ -531,26 +603,26 @@ class GalleryPlugin(WAN2GPPlugin):
             traceback.print_exc()
             gr.Warning(f"Error extracting frame: {e}")
             return gr.update(), gr.update(), gr.update(), gr.update()
-        
-    def delete_selected_files(self, selection_str, current_state):
+
+    def delete_selected_files(self, selection_str, current_state, current_dir):
         """Löscht ausgewählte Dateien aus dem output_folder"""
         if not selection_str:
             gr.Warning("No files selected for deletion.")
-            return self.list_output_files_as_html(current_state)
-        
+            return self.list_output_files_as_html(current_state, current_dir)
+
         file_paths = selection_str.split('||')
         deleted_count = 0
         failed_count = 0
-        
+
         for file_path in file_paths:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
                     deleted_count += 1
-                    
+
                     base_path = os.path.splitext(file_path)[0]
                     metadata_extensions = ['.txt', '.json', '.metadata']
-                    
+
                     for ext in metadata_extensions:
                         metadata_path = base_path + ext
                         if os.path.exists(metadata_path):
@@ -564,54 +636,145 @@ class GalleryPlugin(WAN2GPPlugin):
             except Exception as e:
                 failed_count += 1
                 print(f"Error deleting file {file_path}: {e}")
-        
+
         if deleted_count > 0:
             gr.Info(f"Successfully deleted {deleted_count} file(s).")
-        
+
         if failed_count > 0:
             gr.Warning(f"Failed to delete {failed_count} file(s).")
-        
-        return self.list_output_files_as_html(current_state)
-                
-    def list_output_files_as_html(self, current_state):
-        save_path = self.server_config.get("save_path", "outputs")
-        image_save_path = self.server_config.get("image_save_path", "outputs")
-        paths = {save_path, image_save_path}
-        all_files = []
+
+        return self.list_output_files_as_html(current_state, current_dir)
+
+    # ==========================================
+    # NEU: Galerie-Listing nur auf Stammordner,
+    # Unterordner als Ordner-Kacheln + Navigation
+    # ==========================================
+    def list_output_files_as_html(self, current_state, current_dir=""):
+        save_path = os.path.abspath(self.server_config.get("save_path", "outputs"))
+        image_save_path = os.path.abspath(self.server_config.get("image_save_path", "outputs"))
+        roots = []
+        for p in [save_path, image_save_path]:
+            if p and os.path.isdir(p) and p not in roots:
+                roots.append(p)
+
+        def is_within_roots(path: str) -> bool:
+            ap = os.path.abspath(path)
+            for r in roots:
+                try:
+                    if os.path.commonpath([ap, r]) == r:
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        # Zielordner bestimmen: leer => "kombinierte Root-Ansicht"
+        cur = (current_dir or "").strip()
+        cur_abs = os.path.abspath(cur) if cur else ""
+
+        if cur_abs and (not os.path.isdir(cur_abs) or not is_within_roots(cur_abs)):
+            # Ungültige Navigation => zurück zur Root-Ansicht
+            cur_abs = ""
+
+        folder_items = []
+        file_items = []
         seen_files = set()
-        
-        for path in paths:
-            if os.path.isdir(path) and os.path.exists(path):
-                for root, _, files in os.walk(path):
-                    for f in files:
-                        if self.has_video_file_extension(f) or self.has_image_file_extension(f):
-                            full_path = os.path.join(root, f)
-                            normalized_path = os.path.normpath(os.path.abspath(full_path))
-                            if normalized_path not in seen_files:
-                                seen_files.add(normalized_path)
-                                all_files.append(full_path)
-                            
-        all_files.sort(key=os.path.getctime, reverse=True)
-        thumbnails_dict = get_thumbnails_in_batch_windows([os.path.abspath(f) for f in all_files])
+        seen_folders = set()
+
+        def add_folder(folder_path: str, display: str):
+            ap = os.path.abspath(folder_path)
+            if ap in seen_folders:
+                return
+            seen_folders.add(ap)
+            folder_items.append({"path": ap, "name": display})
+
+        def add_file(file_path: str):
+            ap = os.path.abspath(file_path)
+            if ap in seen_files:
+                return
+            seen_files.add(ap)
+            file_items.append(ap)
+
+        def scan_dir_non_recursive(dir_path: str):
+            try:
+                entries = os.listdir(dir_path)
+            except Exception as e:
+                print(f"Could not list dir {dir_path}: {e}")
+                return
+
+            # Ordner
+            for name in entries:
+                full = os.path.join(dir_path, name)
+                if os.path.isdir(full):
+                    add_folder(full, name)
+
+            # Dateien (nur in diesem Ordner, NICHT rekursiv)
+            for name in entries:
+                full = os.path.join(dir_path, name)
+                if os.path.isfile(full) and (self.has_video_file_extension(name) or self.has_image_file_extension(name)):
+                    add_file(full)
+
+        if not cur_abs:
+            # Root-Ansicht: Dateien direkt in den Roots + Unterordner als Kacheln
+            for r in roots:
+                scan_dir_non_recursive(r)
+        else:
+            # Ordner-Ansicht: ".." anbieten (wenn Parent noch innerhalb roots liegt)
+            parent = os.path.abspath(os.path.join(cur_abs, os.pardir))
+            if parent and parent != cur_abs and is_within_roots(parent):
+                add_folder(parent, "⬆️ ..")
+            scan_dir_non_recursive(cur_abs)
+
+        # Sortierung: Ordner alphabetisch, Dateien nach ctime desc
+        folder_items.sort(key=lambda x: x["name"].lower())
+        file_items.sort(key=os.path.getctime, reverse=True)
+
+        thumbnails_dict = get_thumbnails_in_batch_windows(file_items)
 
         items_html = ""
-        for f in all_files:
-            abs_f = os.path.abspath(f)
+
+        # Ordner zuerst
+        for fo in folder_items:
+            fpath = fo["path"]
+            display_name = fo["name"]
+            safe_path = fpath.replace("'", "\\'")
+            items_html += f"""
+            <div class="gallery-item gallery-folder" data-path='{safe_path}' ondblclick="openGalleryFolder(event, this)">
+                <div class="gallery-item-thumbnail" style="display:flex;align-items:center;justify-content:center;font-size:42px;">
+                    📁
+                </div>
+                <div class="gallery-item-name" title="{display_name}">{display_name}</div>
+            </div>
+            """
+
+        # Dann Dateien
+        for f in file_items:
             safe_path = f.replace("'", "\\'")
             basename = os.path.basename(f)
             display_name = basename
             match = re.search(r'_seed\d+_(.+)\.(mp4|jpg|jpeg|png|webp)$', basename, re.IGNORECASE)
-            if match: display_name = match.group(1)
+            if match:
+                display_name = match.group(1)
+
             is_video = self.has_video_file_extension(f)
-            base64_thumb = thumbnails_dict.get(abs_f)
-            thumbnail_html = f'<img src="data:image/jpeg;base64,{base64_thumb}" alt="thumb">' if base64_thumb else \
-                             f'<video muted preload="metadata" src="/gradio_api/file={f}#t=0.5"></video>' if is_video else \
-                             f'<img src="/gradio_api/file={f}" alt="thumb">'
-            items_html += f"""<div class="gallery-item" data-path='{safe_path}' onclick="selectGalleryItem(event, this)">
-                <div class="gallery-item-thumbnail">{thumbnail_html}</div><div class="gallery-item-name" title="{basename}">{display_name}</div></div>"""
-        
+            base64_thumb = thumbnails_dict.get(os.path.abspath(f))
+
+            thumbnail_html = (
+                f'<img src="data:image/jpeg;base64,{base64_thumb}" alt="thumb">'
+                if base64_thumb else
+                (f'<video muted preload="metadata" src="/gradio_api/file={f}#t=0.5"></video>' if is_video
+                 else f'<img src="/gradio_api/file={f}" alt="thumb">')
+            )
+
+            items_html += f"""
+            <div class="gallery-item" data-path='{safe_path}' onclick="selectGalleryItem(event, this)">
+                <div class="gallery-item-thumbnail">{thumbnail_html}</div>
+                <div class="gallery-item-name" title="{basename}">{display_name}</div>
+            </div>
+            """
+
         full_html = f"<div class='gallery-grid'>{items_html}</div>"
         clear_metadata_html = "<div class='metadata-content'><p class='placeholder'>Select a file to view its metadata.</p></div>"
+
         return {
             self.gallery_html_output: full_html,
             self.selected_files_for_backend: "",
@@ -627,7 +790,8 @@ class GalleryPlugin(WAN2GPPlugin):
             self.last_frame_preview: gr.Image(value=None),
             self.join_interface: gr.Column(visible=False),
             self.merge_info_display: gr.Column(visible=False),
-            self.current_frame_buttons_row: gr.Row(visible=False)
+            self.current_frame_buttons_row: gr.Row(visible=False),
+            self.current_gallery_dir: cur_abs if cur_abs else ""
         }
 
     def add_merge_info_to_metadata(self, configs, plugin_data, **kwargs):
@@ -640,31 +804,63 @@ class GalleryPlugin(WAN2GPPlugin):
         values, labels = [os.path.basename(file_path)], ["File Name"]
         misc_values, misc_labels, pp_values, pp_labels = [], [], [], []
         is_image = self.has_image_file_extension(file_path)
-        if is_image: width, height = Image.open(file_path).size; frames_count = fps = 1; nb_audio_tracks = 0
-        else: fps, width, height, frames_count = self.get_video_info(file_path); nb_audio_tracks = self.extract_audio_tracks(file_path, query_only=True)
+        if is_image:
+            width, height = Image.open(file_path).size
+            frames_count = fps = 1
+            nb_audio_tracks = 0
+        else:
+            fps, width, height, frames_count = self.get_video_info(file_path)
+            nb_audio_tracks = self.extract_audio_tracks(file_path, query_only=True)
         if configs:
             video_model_name = configs.get("type", "Unknown model").split(" - ")[-1]
-            misc_values.append(video_model_name); misc_labels.append("Model")
-            if configs.get("temporal_upsampling"): pp_values.append(configs["temporal_upsampling"]); pp_labels.append("Upsampling")
-            if configs.get("film_grain_intensity", 0) > 0: pp_values.append(f"Intensity={configs['film_grain_intensity']}, Saturation={configs['film_grain_saturation']}"); pp_labels.append("Film Grain")
+            misc_values.append(video_model_name)
+            misc_labels.append("Model")
+            if configs.get("temporal_upsampling"):
+                pp_values.append(configs["temporal_upsampling"])
+                pp_labels.append("Upsampling")
+            if configs.get("film_grain_intensity", 0) > 0:
+                pp_values.append(f"Intensity={configs['film_grain_intensity']}, Saturation={configs['film_grain_saturation']}")
+                pp_labels.append("Film Grain")
         if configs is None or "seed" not in configs:
-            values.extend(misc_values); labels.extend(misc_labels)
-            creation_date = str(self.get_file_creation_date(file_path)); values.append(creation_date[:creation_date.rfind('.')]); labels.append("Creation Date")
-            if is_image: values.append(f"{width}x{height}"); labels.append("Resolution")
-            else: values.extend([f"{width}x{height}", f"{frames_count} frames (duration={frames_count/fps:.1f}s, fps={round(fps)})"]); labels.extend(["Resolution", "Frames"])
-            if nb_audio_tracks > 0: values.append(nb_audio_tracks); labels.append("Nb Audio Tracks")
-            values.extend(pp_values); labels.extend(pp_labels)
+            values.extend(misc_values)
+            labels.extend(misc_labels)
+            creation_date = str(self.get_file_creation_date(file_path))
+            values.append(creation_date[:creation_date.rfind('.')])
+            labels.append("Creation Date")
+            if is_image:
+                values.append(f"{width}x{height}")
+                labels.append("Resolution")
+            else:
+                values.extend([f"{width}x{height}", f"{frames_count} frames (duration={frames_count/fps:.1f}s, fps={round(fps)})"])
+                labels.extend(["Resolution", "Frames"])
+            if nb_audio_tracks > 0:
+                values.append(nb_audio_tracks)
+                labels.append("Nb Audio Tracks")
+            values.extend(pp_values)
+            labels.extend(pp_labels)
         else:
-            values.extend(misc_values); labels.extend(misc_labels); values.append(configs.get("prompt", "")[:1024]); labels.append("Text Prompt")
-            values.extend([f"{configs.get('resolution', '')} (real: {width}x{height})", configs.get('video_length', 0), configs.get('seed', -1), configs.get('guidance_scale', 'N/A'), configs.get('num_inference_steps', 'N/A')])
+            values.extend(misc_values)
+            labels.extend(misc_labels)
+            values.append(configs.get("prompt", "")[:1024])
+            labels.append("Text Prompt")
+            values.extend([
+                f"{configs.get('resolution', '')} (real: {width}x{height})",
+                configs.get('video_length', 0),
+                configs.get('seed', -1),
+                configs.get('guidance_scale', 'N/A'),
+                configs.get('num_inference_steps', 'N/A')
+            ])
             labels.extend(["Resolution", "Video Length", "Seed", "Guidance (CFG)", "Num Inference steps"])
-        rows = [f"<TR><TD style='text-align: right; vertical-align: top; width:1%; white-space:nowrap;'>{l}</TD><TD><B>{v}</B></TD></TR>" for l, v in zip(labels, values) if v is not None]
+        rows = [
+            f"<TR><TD style='text-align: right; vertical-align: top; width:1%; white-space:nowrap;'>{l}</TD><TD><B>{v}</B></TD></TR>"
+            for l, v in zip(labels, values) if v is not None
+        ]
         return f"<TABLE ID=video_info WIDTH=100%>{''.join(rows)}</TABLE>"
 
     def update_metadata_panel_and_buttons(self, selection_str, current_state):
         file_paths = selection_str.split('||') if selection_str else []
         video_files = [f for f in file_paths if self.has_video_file_extension(f)]
-        
+
         updates = {
             self.join_videos_btn: gr.Button(visible=len(video_files) == 2 and len(file_paths) == 2, interactive=True),
             self.recreate_join_btn: gr.Button(visible=False),
@@ -706,18 +902,20 @@ class GalleryPlugin(WAN2GPPlugin):
                     updates[self.recreate_join_btn] = gr.Button(visible=True, interactive=True)
                     updates[self.merge_info_display] = gr.Column(visible=True)
                     f1_num, f2_num = merge_info['source_video_1']['frame_used'], merge_info['source_video_2']['frame_used']
-                    f1_pil, f2_pil = self.get_video_frame(vid1_abs, f1_num - 1, return_PIL=True), self.get_video_frame(vid2_abs, f2_num - 1, return_PIL=True)
+                    f1_pil = self.get_video_frame(vid1_abs, f1_num - 1, return_PIL=True)
+                    f2_pil = self.get_video_frame(vid2_abs, f2_num - 1, return_PIL=True)
                     c1, _, _ = self.get_settings_from_file(current_state, vid1_abs, False, False, False)
                     c2, _, _ = self.get_settings_from_file(current_state, vid2_abs, False, False, False)
-                    p1, p2 = (c1.get('prompt', 'N/A') if c1 else 'N/A'), (c2.get('prompt', 'N/A') if c2 else 'N/A')
-                    
+                    p1 = (c1.get('prompt', 'N/A') if c1 else 'N/A')
+                    p2 = (c2.get('prompt', 'N/A') if c2 else 'N/A')
+
                     updates[self.merge_source1_prompt] = f"<b>{vid1_rel} (Frame {f1_num})</b><br>{p1[:100] + '...' if len(p1) > 100 else p1}"
                     updates[self.merge_source1_image] = f1_pil
                     updates[self.merge_source2_prompt] = f"<b>{vid2_rel} (Frame {f2_num})</b><br>{p2[:100] + '...' if len(p2) > 100 else p2}"
                     updates[self.merge_source2_image] = f2_pil
                 else:
                     updates[self.preview_row] = gr.Column(visible=True)
-            
+
             else:
                 updates[self.preview_row] = gr.Column(visible=True)
                 if self.has_video_file_extension(file_path):
@@ -735,23 +933,30 @@ class GalleryPlugin(WAN2GPPlugin):
 
         elif len(file_paths) > 1:
             updates[self.metadata_panel_output] = gr.HTML(value=f"<div class='metadata-content'><p>{len(file_paths)} items selected.</p></div>", visible=True)
-        
+
         return updates
 
     def load_settings_and_frames_from_gallery(self, current_state, file_path):
-        if not file_path: gr.Warning("No file selected."); return gr.update(), gr.update(), gr.update(), gr.update()
+        if not file_path:
+            gr.Warning("No file selected.")
+            return gr.update(), gr.update(), gr.update(), gr.update()
         configs, _, _ = self.get_settings_from_file(current_state, file_path, True, True, True)
-        if not configs: gr.Info("No settings found."); return gr.update(), gr.update(), gr.update(), gr.update()
+        if not configs:
+            gr.Info("No settings found.")
+            return gr.update(), gr.update(), gr.update(), gr.update()
         current_model_type = current_state["model_type"]
         target_model_type = configs.get("model_type", current_model_type)
-        if self.are_model_types_compatible(target_model_type, current_model_type): target_model_type = current_model_type
+        if self.are_model_types_compatible(target_model_type, current_model_type):
+            target_model_type = current_model_type
         configs["model_type"] = target_model_type
         first_frame, last_frame = None, None
         if self.has_video_file_extension(file_path):
             first_frame = self.get_video_frame(file_path, 0, return_PIL=True)
             _, _, _, frame_count = self.get_video_info(file_path)
-            if frame_count > 1: last_frame = self.get_video_frame(file_path, frame_count - 1, return_PIL=True)
-        elif self.has_image_file_extension(file_path): first_frame = Image.open(file_path)
+            if frame_count > 1:
+                last_frame = self.get_video_frame(file_path, frame_count - 1, return_PIL=True)
+        elif self.has_image_file_extension(file_path):
+            first_frame = Image.open(file_path)
         allowed_prompts = self.get_model_def(target_model_type).get("image_prompt_types_allowed", "")
         configs = {**self.get_default_settings(target_model_type), **configs}
         if first_frame:
@@ -768,9 +973,11 @@ class GalleryPlugin(WAN2GPPlugin):
 
     def show_join_interface(self, selection_str, current_state):
         video_files = [f for f in selection_str.split('||') if self.has_video_file_extension(f)] if selection_str else []
-        if len(video_files) != 2: gr.Warning("Please select exactly two videos."); return {}
+        if len(video_files) != 2:
+            gr.Warning("Please select exactly two videos.")
+            return {}
         return self.recreate_join_interface(video_files, current_state)
-    
+
     def recreate_join_interface(self, file_info, current_state):
         if isinstance(file_info, str):
             configs, _, _ = self.get_settings_from_file(current_state, file_info, False, False, False)
@@ -794,35 +1001,35 @@ class GalleryPlugin(WAN2GPPlugin):
             frame1_num, frame2_num = v1_frames, 1
         else:
             return {}
-        
+
         server_port_val = int(self.args.server_port) if self.args.server_port != 0 else 7860
         server_name_val = self.args.server_name if self.args.server_name and self.args.server_name != "0.0.0.0" else "127.0.0.1"
         base_url = f"http://{server_name_val}:{server_port_val}"
         v1_fps, _, _, v1_frames = self.get_video_info(vid1_path)
         v2_fps, _, _, v2_frames = self.get_video_info(vid2_path)
-        
-        def create_player(container_id, slider_id, path, fps): 
+
+        def create_player(container_id, slider_id, path, fps):
             return f'<div id="{container_id}" class="video-joiner-player" data-slider-id="{slider_id}" data-fps="{fps}"><video src="{base_url}/gradio_api/file={path}" style="width:100%;" controls muted preload="metadata"></video></div>'
 
         player1_html = create_player("video1_player_container", "video1_frame_slider", vid1_path, v1_fps)
         player2_html = create_player("video2_player_container", "video2_frame_slider", vid2_path, v2_fps)
-        
-        return { 
-            self.join_interface: gr.Column(visible=True), 
-            self.preview_row: gr.Column(visible=False), 
+
+        return {
+            self.join_interface: gr.Column(visible=True),
+            self.preview_row: gr.Column(visible=False),
             self.merge_info_display: gr.Column(visible=False),
             self.metadata_panel_output: gr.HTML(visible=False),
             self.send_to_generator_settings_btn: gr.Button(visible=False),
             self.join_videos_btn: gr.Button(visible=False),
             self.recreate_join_btn: gr.Button(visible=False),
-            self.video1_preview: gr.HTML(value=player1_html), 
-            self.video2_preview: gr.HTML(value=player2_html), 
-            self.video1_path: vid1_path, 
-            self.video2_path: vid2_path, 
-            self.video1_frame_slider: gr.Slider(maximum=v1_frames, value=frame1_num), 
-            self.video2_frame_slider: gr.Slider(maximum=v2_frames, value=frame2_num), 
-            self.video1_info: self.get_video_info_html(current_state, vid1_path), 
-            self.video2_info: self.get_video_info_html(current_state, vid2_path) 
+            self.video1_preview: gr.HTML(value=player1_html),
+            self.video2_preview: gr.HTML(value=player2_html),
+            self.video1_path: vid1_path,
+            self.video2_path: vid2_path,
+            self.video1_frame_slider: gr.Slider(maximum=v1_frames, value=frame1_num),
+            self.video2_frame_slider: gr.Slider(maximum=v2_frames, value=frame2_num),
+            self.video1_info: self.get_video_info_html(current_state, vid1_path),
+            self.video2_info: self.get_video_info_html(current_state, vid2_path)
         }
 
     def send_selected_frames_to_generator(self, vid1_path, frame1_num, vid2_path, frame2_num, current_image_prompt_type):
