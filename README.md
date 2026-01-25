@@ -24,6 +24,9 @@ New Update Jan 25, 2026:
 - Automatic switching of background colors for light and dark themes
 - Button positions adjusted
 - Delete button turns red as a warning when hovered over.
+- Folder navigation via double-click
+- Recursive search removed.
+Only files in the root folders (save_path, image_save_path) are displayed (or in the currently open folder), no subfolder files.
 
 **The original Gallery plugin must be uninstalled first.**
 If you want to test it, install it from the URL under Plugins:
