@@ -20,6 +20,10 @@ If you want to use a specific frame from any video of your choice as your start 
 - Then fast-forward to the desired frame in the video
 - and click "Use as start image" or "Use as end image"
 
+New Update Jan 25, 2026:
+- Automatic switching of background colors for light and dark themes
+- Button positions adjusted
+- Delete button turns red as a warning when hovered over.
 
 **The original Gallery plugin must be uninstalled first.**
 If you want to test it, install it from the URL under Plugins:
