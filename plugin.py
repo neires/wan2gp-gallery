@@ -12,7 +12,7 @@ class GalleryPlugin(WAN2GPPlugin):
     def __init__(self):
         super().__init__()
         self.name = "File Gallery 2"
-        self.version = "2.0.1"
+        self.version = "2.0.2"
         self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, and more"
         self.loaded_once = False
 
@@ -168,7 +168,6 @@ class GalleryPlugin(WAN2GPPlugin):
         js = """
             function() {
                 window.selectGalleryItem = function(event, element) {
-                    // Ordner sollen nicht selektiert werden
                     if (element.classList.contains('gallery-folder')) return;
 
                     const gallery = element.closest('.gallery-grid');
@@ -186,7 +185,6 @@ class GalleryPlugin(WAN2GPPlugin):
                     selectedFilesInput.dispatchEvent(new Event('input', { bubbles: true }));
                 };
 
-                // Doppelklick auf Ordner: navigieren
                 window.openGalleryFolder = function(event, element) {
                     event.preventDefault();
                     event.stopPropagation();
@@ -199,7 +197,6 @@ class GalleryPlugin(WAN2GPPlugin):
                     dirInput.value = targetPath || "";
                     dirInput.dispatchEvent(new Event('input', { bubbles: true }));
 
-                    // Auswahl leeren
                     if (selectedFilesInput) {
                         selectedFilesInput.value = "";
                         selectedFilesInput.dispatchEvent(new Event('input', { bubbles: true }));
