@@ -11,9 +11,6 @@ from .gallery_utils import get_thumbnails_in_batch_windows
 class GalleryPlugin(WAN2GPPlugin):
     def __init__(self):
         super().__init__()
-        self.name = "File Gallery"
-        self.version = "2.0.2"
-        self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, and more"
         self.loaded_once = False
 
     def setup_ui(self):
@@ -1039,3 +1036,4 @@ class GalleryPlugin(WAN2GPPlugin):
             self.image_prompt_type_endcheckbox: gr.Checkbox(value=True),
             self.plugin_data: {"merge_info": merge_info}
         }
+
