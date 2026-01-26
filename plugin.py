@@ -11,7 +11,7 @@ from .gallery_utils import get_thumbnails_in_batch_windows
 class GalleryPlugin(WAN2GPPlugin):
     def __init__(self):
         super().__init__()
-        self.name = "File Gallery 2"
+        self.name = "File Gallery"
         self.version = "2.0.2"
         self.description = "Adds a Gallery tab that allows you to view metadata of all files in your output folders, join video frames with a single click, and more"
         self.loaded_once = False
@@ -337,7 +337,7 @@ class GalleryPlugin(WAN2GPPlugin):
             with gr.Column(elem_id="gallery_tab_container"):
                 with gr.Row():
                     self.refresh_gallery_files_btn = gr.Button("Refresh Files")
-                    self.delete_files_btn = gr.Button("Delete selected File", elem_id="stop-button")  # add new Button delete
+                    self.delete_files_btn = gr.Button("Delete selected File", elem_id="stop-button")
                 with gr.Row(elem_id="gallery-layout"):
                     self.gallery_html_output = gr.HTML(
                         value="<div class='gallery-grid'><p class='placeholder'>Click 'Refresh Files' to load gallery.</p></div>",
@@ -349,7 +349,6 @@ class GalleryPlugin(WAN2GPPlugin):
                         with gr.Column(visible=False) as self.preview_row:
                             self.video_preview = gr.Video(label="Preview", interactive=True, height=250, visible=False, elem_id="main_video_preview")
                             self.image_preview = gr.Image(label="Preview", interactive=False, height=250, visible=False)
-                            # Neue Buttons für Current Frame
                             with gr.Row(visible=False) as self.current_frame_buttons_row:
                                 self.use_as_start_btn = gr.Button("⬆️ as Start-Image", variant="primary", elem_id="custom-button")
                                 self.use_as_end_btn = gr.Button("as End-Image ⬆️", variant="primary", elem_id="custom-button")
@@ -386,7 +385,6 @@ class GalleryPlugin(WAN2GPPlugin):
                                 self.cancel_join_btn = gr.Button("Cancel")
 
                 self.selected_files_for_backend = gr.Text(label="Selected Files", visible=False, elem_id="selected-files-backend")
-                # NEU: aktuelles Galerie-Verzeichnis für Navigation
                 self.current_gallery_dir = gr.Text(label="Current Gallery Dir", visible=False, elem_id="current-gallery-dir")
                 self.path_for_settings_loader = gr.Text(label="Path for Settings Loader", visible=False)
                 self.current_selected_video_path = gr.Text(visible=False)
@@ -407,7 +405,7 @@ class GalleryPlugin(WAN2GPPlugin):
             self.recreate_join_btn,
             self.merge_info_display,
             self.current_frame_buttons_row,
-            self.current_gallery_dir,  # NEU: damit list_output_files_as_html den aktuellen Ordner zurücksetzen kann
+            self.current_gallery_dir,
         ]
         no_updates = {comp: gr.update() for comp in outputs_list}
 
@@ -429,7 +427,6 @@ class GalleryPlugin(WAN2GPPlugin):
             outputs=outputs_list
         )
 
-        # NEU: Navigation bei Änderung des Ordners (wird von JS via Doppelklick gesetzt)
         self.current_gallery_dir.change(
             fn=self.list_output_files_as_html,
             inputs=[self.state, self.current_gallery_dir],
@@ -458,7 +455,6 @@ class GalleryPlugin(WAN2GPPlugin):
             show_progress="hidden"
         )
 
-        # Neue Event-Handler für Current Frame Buttons
         self.use_as_start_btn.click(
             fn=self.use_current_frame_as_start,
             inputs=[self.current_selected_video_path],
@@ -642,10 +638,6 @@ class GalleryPlugin(WAN2GPPlugin):
 
         return self.list_output_files_as_html(current_state, current_dir)
 
-    # ==========================================
-    # NEU: Galerie-Listing nur auf Stammordner,
-    # Unterordner als Ordner-Kacheln + Navigation
-    # ==========================================
     def list_output_files_as_html(self, current_state, current_dir=""):
         save_path = os.path.abspath(self.server_config.get("save_path", "outputs"))
         image_save_path = os.path.abspath(self.server_config.get("image_save_path", "outputs"))
@@ -664,12 +656,10 @@ class GalleryPlugin(WAN2GPPlugin):
                     pass
             return False
 
-        # Zielordner bestimmen: leer => "kombinierte Root-Ansicht"
         cur = (current_dir or "").strip()
         cur_abs = os.path.abspath(cur) if cur else ""
 
         if cur_abs and (not os.path.isdir(cur_abs) or not is_within_roots(cur_abs)):
-            # Ungültige Navigation => zurück zur Root-Ansicht
             cur_abs = ""
 
         folder_items = []
@@ -698,30 +688,25 @@ class GalleryPlugin(WAN2GPPlugin):
                 print(f"Could not list dir {dir_path}: {e}")
                 return
 
-            # Ordner
             for name in entries:
                 full = os.path.join(dir_path, name)
                 if os.path.isdir(full):
                     add_folder(full, name)
 
-            # Dateien (nur in diesem Ordner, NICHT rekursiv)
             for name in entries:
                 full = os.path.join(dir_path, name)
                 if os.path.isfile(full) and (self.has_video_file_extension(name) or self.has_image_file_extension(name)):
                     add_file(full)
 
         if not cur_abs:
-            # Root-Ansicht: Dateien direkt in den Roots + Unterordner als Kacheln
             for r in roots:
                 scan_dir_non_recursive(r)
         else:
-            # Ordner-Ansicht: ".." anbieten (wenn Parent noch innerhalb roots liegt)
             parent = os.path.abspath(os.path.join(cur_abs, os.pardir))
             if parent and parent != cur_abs and is_within_roots(parent):
                 add_folder(parent, "⬆️ ..")
             scan_dir_non_recursive(cur_abs)
 
-        # Sortierung: Ordner alphabetisch, Dateien nach ctime desc
         folder_items.sort(key=lambda x: x["name"].lower())
         file_items.sort(key=os.path.getctime, reverse=True)
 
@@ -729,7 +714,6 @@ class GalleryPlugin(WAN2GPPlugin):
 
         items_html = ""
 
-        # Ordner zuerst
         for fo in folder_items:
             fpath = fo["path"]
             display_name = fo["name"]
@@ -743,7 +727,6 @@ class GalleryPlugin(WAN2GPPlugin):
             </div>
             """
 
-        # Dann Dateien
         for f in file_items:
             safe_path = f.replace("'", "\\'")
             basename = os.path.basename(f)
