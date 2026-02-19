@@ -4,6 +4,8 @@ import os
 import re
 from PIL import Image
 import gc
+import subprocess
+import json
 
 from .gallery_utils import get_thumbnails_in_batch_windows
 
@@ -23,6 +25,7 @@ class GalleryPlugin(WAN2GPPlugin):
         self.request_global("server_config")
         self.request_global("has_video_file_extension")
         self.request_global("has_image_file_extension")
+        self.request_global("has_audio_file_extension")
         self.request_global("get_settings_from_file")
         self.request_global("get_video_info")
         self.request_global("extract_audio_tracks")
@@ -346,6 +349,7 @@ class GalleryPlugin(WAN2GPPlugin):
                         with gr.Column(visible=False) as self.preview_row:
                             self.video_preview = gr.Video(label="Preview", interactive=True, height=250, visible=False, elem_id="main_video_preview")
                             self.image_preview = gr.Image(label="Preview", interactive=False, height=250, visible=False)
+                            self.audio_preview = gr.Audio(label="Preview", interactive=False, visible=False)
                             with gr.Row(visible=False) as self.current_frame_buttons_row:
                                 self.use_as_start_btn = gr.Button("⬆️ as Start-Image", variant="primary", elem_id="custom-button")
                                 self.use_as_end_btn = gr.Button("as End-Image ⬆️", variant="primary", elem_id="custom-button")
@@ -395,6 +399,7 @@ class GalleryPlugin(WAN2GPPlugin):
             self.preview_row,
             self.video_preview,
             self.image_preview,
+            self.audio_preview,
             self.frame_preview_row,
             self.first_frame_preview,
             self.last_frame_preview,
@@ -443,7 +448,7 @@ class GalleryPlugin(WAN2GPPlugin):
             inputs=[self.selected_files_for_backend, self.state],
             outputs=[
                 self.join_videos_btn, self.send_to_generator_settings_btn, self.metadata_panel_output,
-                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview,
+                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview, self.audio_preview,
                 self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
                 self.join_interface, self.recreate_join_btn, self.merge_info_display,
                 self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image,
@@ -518,7 +523,7 @@ class GalleryPlugin(WAN2GPPlugin):
             inputs=[self.selected_files_for_backend, self.state],
             outputs=[
                 self.join_videos_btn, self.send_to_generator_settings_btn, self.metadata_panel_output,
-                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview,
+                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview, self.audio_preview,
                 self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
                 self.join_interface, self.recreate_join_btn, self.merge_info_display,
                 self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image,
@@ -692,7 +697,11 @@ class GalleryPlugin(WAN2GPPlugin):
 
             for name in entries:
                 full = os.path.join(dir_path, name)
-                if os.path.isfile(full) and (self.has_video_file_extension(name) or self.has_image_file_extension(name)):
+                if os.path.isfile(full) and (
+                    self.has_video_file_extension(name)
+                    or self.has_image_file_extension(name)
+                    or self.has_audio_file_extension(name)
+                ):
                     add_file(full)
 
         if not cur_abs:
@@ -707,16 +716,24 @@ class GalleryPlugin(WAN2GPPlugin):
         folder_items.sort(key=lambda x: x["name"].lower())
         file_items.sort(key=os.path.getctime, reverse=True)
 
-        thumbnails_dict = get_thumbnails_in_batch_windows(file_items)
+        # Thumbnails nur für Bild/Video erzeugen
+        thumb_targets = [
+            p for p in file_items
+            if self.has_video_file_extension(p) or self.has_image_file_extension(p)
+        ]
+        thumbnails_dict = get_thumbnails_in_batch_windows(thumb_targets)
 
         items_html = ""
 
+        # -------- FOLDER --------
         for fo in folder_items:
             fpath = fo["path"]
             display_name = fo["name"]
-            safe_path = fpath.replace("'", "\\'")
+
+            safe_path = json.dumps(fpath, ensure_ascii=False)
+
             items_html += f"""
-            <div class="gallery-item gallery-folder" data-path='{safe_path}' ondblclick="openGalleryFolder(event, this)">
+            <div class="gallery-item gallery-folder" data-path={safe_path} ondblclick="openGalleryFolder(event, this)">
                 <div class="gallery-item-thumbnail" style="display:flex;align-items:center;justify-content:center;font-size:42px;">
                     📁
                 </div>
@@ -724,33 +741,52 @@ class GalleryPlugin(WAN2GPPlugin):
             </div>
             """
 
+        # -------- FILES --------
         for f in file_items:
-            safe_path = f.replace("'", "\\'")
             basename = os.path.basename(f)
             display_name = basename
-            match = re.search(r'_seed\d+_(.+)\.(mp4|jpg|jpeg|png|webp)$', basename, re.IGNORECASE)
+
+            match = re.search(r'_seed\d+_(.+)\.(mp4|jpg|jpeg|png|webp|wav|mp3|flac|ogg|m4a|aac)$',
+                              basename, re.IGNORECASE)
             if match:
                 display_name = match.group(1)
 
             is_video = self.has_video_file_extension(f)
+            is_audio = self.has_audio_file_extension(f)
+
             base64_thumb = thumbnails_dict.get(os.path.abspath(f))
 
-            thumbnail_html = (
-                f'<img src="data:image/jpeg;base64,{base64_thumb}" alt="thumb">'
-                if base64_thumb else
-                (f'<video muted preload="metadata" src="/gradio_api/file={f}#t=0.5"></video>' if is_video
-                 else f'<img src="/gradio_api/file={f}" alt="thumb">')
-            )
+            if is_audio:
+                thumbnail_html = """
+                    <div style="font-size:42px;line-height:1;display:flex;align-items:center;justify-content:center;height:100%;">
+                        🔊
+                    </div>
+                """
+            else:
+                thumbnail_html = (
+                    f'<img src="data:image/jpeg;base64,{base64_thumb}" alt="thumb">'
+                    if base64_thumb else
+                    (f'<video muted preload="metadata" src="/gradio_api/file={f}#t=0.5"></video>'
+                     if is_video
+                     else f'<img src="/gradio_api/file={f}" alt="thumb">')
+                )
+
+            safe_path = json.dumps(f, ensure_ascii=False)
 
             items_html += f"""
-            <div class="gallery-item" data-path='{safe_path}' onclick="selectGalleryItem(event, this)">
+            <div class="gallery-item" data-path={safe_path} onclick="selectGalleryItem(event, this)">
                 <div class="gallery-item-thumbnail">{thumbnail_html}</div>
                 <div class="gallery-item-name" title="{basename}">{display_name}</div>
             </div>
             """
 
         full_html = f"<div class='gallery-grid'>{items_html}</div>"
-        clear_metadata_html = "<div class='metadata-content'><p class='placeholder'>Select a file to view its metadata.</p></div>"
+
+        clear_metadata_html = """
+        <div class='metadata-content'>
+            <p class='placeholder'>Select a file to view its metadata.</p>
+        </div>
+        """
 
         return {
             self.gallery_html_output: full_html,
@@ -760,8 +796,9 @@ class GalleryPlugin(WAN2GPPlugin):
             self.recreate_join_btn: gr.Button(visible=False),
             self.send_to_generator_settings_btn: gr.Button(visible=False),
             self.preview_row: gr.Column(visible=False),
-            self.video_preview: gr.Video(value=None),
-            self.image_preview: gr.Image(value=None),
+            self.video_preview: gr.Video(value=None, visible=False),
+            self.image_preview: gr.Image(value=None, visible=False),
+            self.audio_preview: gr.Audio(value=None, visible=False),
             self.frame_preview_row: gr.Row(visible=False),
             self.first_frame_preview: gr.Image(value=None),
             self.last_frame_preview: gr.Image(value=None),
@@ -771,10 +808,111 @@ class GalleryPlugin(WAN2GPPlugin):
             self.current_gallery_dir: cur_abs if cur_abs else ""
         }
 
+
     def add_merge_info_to_metadata(self, configs, plugin_data, **kwargs):
         if plugin_data and "merge_info" in plugin_data:
             configs["merge_info"] = plugin_data["merge_info"]
         return configs
+
+    def probe_audio_ffprobe(self, file_path: str) -> dict:
+        """
+        Returns a dict with: duration_s, codec, sample_rate, channels, bit_rate
+        Uses ffprobe; safe fallback on failure.
+        """
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-print_format", "json",
+            "-show_format",
+            "-show_streams",
+            file_path
+        ]
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if p.returncode != 0 or not p.stdout:
+                return {}
+            data = json.loads(p.stdout)
+    
+            # pick first audio stream
+            streams = data.get("streams", []) or []
+            astream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    
+            fmt = data.get("format", {}) or {}
+            duration = None
+            if fmt.get("duration") is not None:
+                try:
+                    duration = float(fmt["duration"])
+                except Exception:
+                    duration = None
+    
+            out = {}
+            if duration is not None:
+                out["duration_s"] = duration
+            if astream:
+                if astream.get("codec_name"):
+                    out["codec"] = astream.get("codec_name")
+                if astream.get("sample_rate"):
+                    try:
+                        out["sample_rate"] = int(astream.get("sample_rate"))
+                    except Exception:
+                        out["sample_rate"] = astream.get("sample_rate")
+                if astream.get("channels") is not None:
+                    out["channels"] = astream.get("channels")
+                if astream.get("bit_rate") or fmt.get("bit_rate"):
+                    br = astream.get("bit_rate") or fmt.get("bit_rate")
+                    try:
+                        out["bit_rate"] = int(br)
+                    except Exception:
+                        out["bit_rate"] = br
+            return out
+        except Exception as e:
+            print(f"ffprobe audio error: {e}")
+            return {}
+    
+    
+    def get_audio_info_html(self, file_path: str) -> str:
+        values, labels = [os.path.basename(file_path)], ["File Name"]
+    
+        creation_date = str(self.get_file_creation_date(file_path))
+        values.append(creation_date[:creation_date.rfind('.')])
+        labels.append("Creation Date")
+    
+        try:
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            values.append(f"{size_mb:.2f} MB")
+            labels.append("File Size")
+        except Exception:
+            pass
+    
+        info = self.probe_audio_ffprobe(file_path)
+        if info:
+            if "duration_s" in info:
+                values.append(f"{info['duration_s']:.2f} s")
+                labels.append("Duration")
+            if info.get("codec"):
+                values.append(info["codec"])
+                labels.append("Codec")
+            if info.get("sample_rate"):
+                values.append(f"{info['sample_rate']} Hz")
+                labels.append("Sample Rate")
+            if info.get("channels") is not None:
+                values.append(info["channels"])
+                labels.append("Channels")
+            if info.get("bit_rate"):
+                try:
+                    kbps = int(info["bit_rate"]) / 1000
+                    values.append(f"{kbps:.0f} kbps")
+                except Exception:
+                    values.append(str(info["bit_rate"]))
+                labels.append("Bitrate")
+    
+        rows = [
+            f"<TR><TD style='text-align: right; vertical-align: top; width:1%; white-space:nowrap;'>{l}</TD>"
+            f"<TD><B>{v}</B></TD></TR>"
+            for l, v in zip(labels, values) if v is not None
+        ]
+        return f"<TABLE ID=video_info WIDTH=100%>{''.join(rows)}</TABLE>"
+
 
     def get_video_info_html(self, current_state, file_path):
         configs, _, _ = self.get_settings_from_file(current_state, file_path, False, False, False)
@@ -846,6 +984,7 @@ class GalleryPlugin(WAN2GPPlugin):
             self.preview_row: gr.Column(visible=False),
             self.video_preview: gr.Video(visible=False, value=None),
             self.image_preview: gr.Image(visible=False, value=None),
+            self.audio_preview: gr.Audio(visible=False, value=None),
             self.frame_preview_row: gr.Row(visible=False),
             self.first_frame_preview: gr.Image(value=None),
             self.last_frame_preview: gr.Image(value=None),
@@ -865,7 +1004,10 @@ class GalleryPlugin(WAN2GPPlugin):
             updates[self.path_for_settings_loader] = file_path
             configs, _, _ = self.get_settings_from_file(current_state, file_path, False, False, False)
             updates[self.send_to_generator_settings_btn] = gr.Button(visible=True, interactive=bool(configs))
-            updates[self.metadata_panel_output] = gr.HTML(value=self.get_video_info_html(current_state, file_path), visible=True)
+            if self.has_audio_file_extension(file_path):
+                updates[self.metadata_panel_output] = gr.HTML(value=self.get_audio_info_html(file_path), visible=True)
+            else:
+                updates[self.metadata_panel_output] = gr.HTML(value=self.get_video_info_html(current_state, file_path), visible=True)
 
             if configs and "merge_info" in configs:
                 merge_info = configs["merge_info"]
@@ -895,18 +1037,69 @@ class GalleryPlugin(WAN2GPPlugin):
 
             else:
                 updates[self.preview_row] = gr.Column(visible=True)
+
                 if self.has_video_file_extension(file_path):
+                    # --- VIDEO PREVIEW ---
                     updates[self.video_preview] = gr.Video(value=file_path, visible=True)
+                    updates[self.image_preview] = gr.Image(visible=False, value=None)
+                    updates[self.audio_preview] = gr.Audio(visible=False, value=None)
+
                     updates[self.current_frame_buttons_row] = gr.Row(visible=True)
                     updates[self.current_selected_video_path] = file_path
+
                     updates[self.frame_preview_row] = gr.Row(visible=True)
                     first_frame_pil = self.get_video_frame(file_path, 0, return_PIL=True)
                     _, _, _, frame_count = self.get_video_info(file_path)
-                    last_frame_pil = self.get_video_frame(file_path, frame_count - 1, return_PIL=True) if frame_count > 1 else first_frame_pil
-                    updates[self.first_frame_preview] = gr.Image(value=first_frame_pil, label="First Frame")
-                    updates[self.last_frame_preview] = gr.Image(value=last_frame_pil, label="Last Frame", visible=True)
+                    last_frame_pil = (
+                        self.get_video_frame(file_path, frame_count - 1, return_PIL=True)
+                        if frame_count > 1 else first_frame_pil
+                    )
+
+                    updates[self.first_frame_preview] = gr.Image(
+                        value=first_frame_pil,
+                        label="First Frame"
+                    )
+                    updates[self.last_frame_preview] = gr.Image(
+                        value=last_frame_pil,
+                        label="Last Frame",
+                        visible=True
+                    )
+
                 elif self.has_image_file_extension(file_path):
-                    updates[self.image_preview] = gr.Image(value=Image.open(file_path), label="Image Preview", visible=True)
+                    # --- IMAGE PREVIEW ---
+                    updates[self.image_preview] = gr.Image(
+                        value=Image.open(file_path),
+                        label="Image Preview",
+                        visible=True
+                    )
+                    updates[self.video_preview] = gr.Video(visible=False, value=None)
+                    updates[self.audio_preview] = gr.Audio(visible=False, value=None)
+
+                    updates[self.current_frame_buttons_row] = gr.Row(visible=False)
+                    updates[self.frame_preview_row] = gr.Row(visible=False)
+                    updates[self.current_selected_video_path] = ""
+
+                elif self.has_audio_file_extension(file_path):
+                    # --- AUDIO PREVIEW ---
+                    updates[self.audio_preview] = gr.Audio(
+                        value=file_path,
+                        visible=True
+                    )
+                    updates[self.video_preview] = gr.Video(visible=False, value=None)
+                    updates[self.image_preview] = gr.Image(visible=False, value=None)
+
+                    updates[self.current_frame_buttons_row] = gr.Row(visible=False)
+                    updates[self.frame_preview_row] = gr.Row(visible=False)
+                    updates[self.current_selected_video_path] = ""
+
+                else:
+                    # fallback
+                    updates[self.video_preview] = gr.Video(visible=False, value=None)
+                    updates[self.image_preview] = gr.Image(visible=False, value=None)
+                    updates[self.audio_preview] = gr.Audio(visible=False, value=None)
+                    updates[self.current_frame_buttons_row] = gr.Row(visible=False)
+                    updates[self.frame_preview_row] = gr.Row(visible=False)
+                    updates[self.current_selected_video_path] = ""
 
         elif len(file_paths) > 1:
             updates[self.metadata_panel_output] = gr.HTML(value=f"<div class='metadata-content'><p>{len(file_paths)} items selected.</p></div>", visible=True)
