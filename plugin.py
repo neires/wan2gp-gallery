@@ -8,6 +8,7 @@ import subprocess
 import json
 import hashlib
 import time
+import html
 
 from .gallery_utils import get_thumbnails_in_batch_windows
 
@@ -17,6 +18,9 @@ class GalleryPlugin(WAN2GPPlugin):
         super().__init__()
         self.loaded_once = False
         self.THUMB_CACHE_MAX_ENTRIES = 3000
+        self.GALLERY_MAX_RENDER_ITEMS = 400
+        self.THUMBNAIL_MAX_GENERATE_PER_REFRESH = 120
+        self._settings_path = None
         self._thumb_cache = {}
         self._scan_cache = {}
         self._disk_cache_initialized = False
@@ -26,13 +30,14 @@ class GalleryPlugin(WAN2GPPlugin):
         self._thumb_disk_index = {}
         self._thumb_disk_index_dirty = False
         self._thumb_disk_last_save_ts = 0.0
+        self._load_plugin_settings()
 
     def setup_ui(self):
         self.add_tab(
             tab_id="gallery_tab",
             label="Gallery",
             component_constructor=self.create_gallery_ui,
-            position=1
+            position=1,
         )
         self.request_global("server_config")
         self.request_global("has_video_file_extension")
@@ -69,7 +74,9 @@ class GalleryPlugin(WAN2GPPlugin):
 
     def _get_roots(self):
         save_path = os.path.abspath(self.server_config.get("save_path", "outputs"))
-        image_save_path = os.path.abspath(self.server_config.get("image_save_path", "outputs"))
+        image_save_path = os.path.abspath(
+            self.server_config.get("image_save_path", "outputs")
+        )
         roots = []
         for p in [save_path, image_save_path]:
             if p and os.path.isdir(p) and p not in roots:
@@ -101,6 +108,80 @@ class GalleryPlugin(WAN2GPPlugin):
         except Exception:
             return os.path.abspath(".")
 
+    def _coerce_int_setting(self, value, default, minimum, maximum):
+        try:
+            parsed = int(value)
+        except Exception:
+            return default
+        return max(minimum, min(maximum, parsed))
+
+    def _get_settings_path(self):
+        if self._settings_path:
+            return self._settings_path
+        self._settings_path = os.path.join(self._get_plugin_base_dir(), "settings.json")
+        return self._settings_path
+
+    def _load_plugin_settings(self):
+        settings_path = self._get_settings_path()
+        if not os.path.exists(settings_path):
+            return
+        try:
+            with open(settings_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return
+            self.GALLERY_MAX_RENDER_ITEMS = self._coerce_int_setting(
+                data.get("gallery_max_render_items", self.GALLERY_MAX_RENDER_ITEMS),
+                self.GALLERY_MAX_RENDER_ITEMS,
+                50,
+                5000,
+            )
+            self.THUMBNAIL_MAX_GENERATE_PER_REFRESH = self._coerce_int_setting(
+                data.get(
+                    "thumbnail_max_generate_per_refresh",
+                    self.THUMBNAIL_MAX_GENERATE_PER_REFRESH,
+                ),
+                self.THUMBNAIL_MAX_GENERATE_PER_REFRESH,
+                10,
+                1000,
+            )
+        except Exception as e:
+            print(f"Could not load gallery settings: {e}")
+
+    def _save_plugin_settings(self):
+        settings_path = self._get_settings_path()
+        payload = {
+            "gallery_max_render_items": int(self.GALLERY_MAX_RENDER_ITEMS),
+            "thumbnail_max_generate_per_refresh": int(
+                self.THUMBNAIL_MAX_GENERATE_PER_REFRESH
+            ),
+        }
+        try:
+            with open(settings_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Could not save gallery settings: {e}")
+
+    def save_gallery_performance_settings(self, max_render_items, max_generate):
+        self.GALLERY_MAX_RENDER_ITEMS = self._coerce_int_setting(
+            max_render_items, self.GALLERY_MAX_RENDER_ITEMS, 50, 5000
+        )
+        self.THUMBNAIL_MAX_GENERATE_PER_REFRESH = self._coerce_int_setting(
+            max_generate, self.THUMBNAIL_MAX_GENERATE_PER_REFRESH, 10, 1000
+        )
+        self._save_plugin_settings()
+        gr.Info(
+            f"Gallery performance settings saved (render={self.GALLERY_MAX_RENDER_ITEMS}, thumbs={self.THUMBNAIL_MAX_GENERATE_PER_REFRESH})."
+        )
+        return {
+            self.gallery_max_render_items_input: gr.Slider(
+                value=self.GALLERY_MAX_RENDER_ITEMS
+            ),
+            self.thumbnail_max_generate_input: gr.Slider(
+                value=self.THUMBNAIL_MAX_GENERATE_PER_REFRESH
+            ),
+        }
+
     def _ensure_disk_thumb_cache(self):
         if self._disk_cache_initialized:
             return
@@ -130,11 +211,16 @@ class GalleryPlugin(WAN2GPPlugin):
                             key = meta.get("key")
                             fn = meta.get("file")
                             ts = meta.get("ts", 0)
-                            if isinstance(p, str) and isinstance(key, (list, tuple)) and len(key) == 2 and isinstance(fn, str):
+                            if (
+                                isinstance(p, str)
+                                and isinstance(key, (list, tuple))
+                                and len(key) == 2
+                                and isinstance(fn, str)
+                            ):
                                 self._thumb_disk_index[p] = {
                                     "key": [int(key[0]), int(key[1])],
                                     "file": fn,
-                                    "ts": float(ts) if ts is not None else 0.0
+                                    "ts": float(ts) if ts is not None else 0.0,
                                 }
         except Exception as e:
             print(f"Could not load gallery thumb cache index: {e}")
@@ -239,7 +325,10 @@ class GalleryPlugin(WAN2GPPlugin):
                     break
         self._ensure_disk_thumb_cache()
         if len(self._thumb_disk_index) > self.THUMB_CACHE_MAX_ENTRIES:
-            items = sorted(self._thumb_disk_index.items(), key=lambda kv: (kv[1].get("ts", 0) if isinstance(kv[1], dict) else 0))
+            items = sorted(
+                self._thumb_disk_index.items(),
+                key=lambda kv: kv[1].get("ts", 0) if isinstance(kv[1], dict) else 0,
+            )
             remove_count = len(self._thumb_disk_index) - self.THUMB_CACHE_MAX_ENTRIES
             for i in range(remove_count):
                 try:
@@ -252,11 +341,16 @@ class GalleryPlugin(WAN2GPPlugin):
     def _invalidate_scan_cache_for_dir(self, dir_path: str):
         self._scan_cache.pop(os.path.abspath(dir_path), None)
 
-    def _scan_dir_non_recursive_cached(self, dir_path: str, force_refresh=False, incremental_refresh=False):
+    def _scan_dir_non_recursive_cached(
+        self, dir_path: str, force_refresh=False, incremental_refresh=False
+    ):
         dir_abs = os.path.abspath(dir_path)
         if (not force_refresh) and (dir_abs in self._scan_cache):
             cached = self._scan_cache.get(dir_abs, {"folders": [], "files": []})
-            return {"folders": list(cached.get("folders", [])), "files": list(cached.get("files", []))}
+            return {
+                "folders": list(cached.get("folders", [])),
+                "files": list(cached.get("files", [])),
+            }
         old = self._scan_cache.get(dir_abs, {"folders": [], "files": []})
         old_files_set = set(old.get("files", []))
         folders = []
@@ -297,12 +391,23 @@ class GalleryPlugin(WAN2GPPlugin):
             for p in new_files_set:
                 cached_thumb = self._thumb_cache.get(p)
                 current_sig = self._thumb_sig_from_path(p)
-                if cached_thumb and ((not current_sig) or (cached_thumb.get("key") != current_sig)):
+                if cached_thumb and (
+                    (not current_sig) or (cached_thumb.get("key") != current_sig)
+                ):
                     self._thumb_cache.pop(p, None)
-                disk_meta = self._thumb_disk_index.get(p) if self._disk_cache_initialized else None
+                disk_meta = (
+                    self._thumb_disk_index.get(p)
+                    if self._disk_cache_initialized
+                    else None
+                )
                 if disk_meta and current_sig:
                     dkey = disk_meta.get("key")
-                    if not (isinstance(dkey, (list, tuple)) and len(dkey) == 2 and [int(dkey[0]), int(dkey[1])] == [int(current_sig[0]), int(current_sig[1])]):
+                    if not (
+                        isinstance(dkey, (list, tuple))
+                        and len(dkey) == 2
+                        and [int(dkey[0]), int(dkey[1])]
+                        == [int(current_sig[0]), int(current_sig[1])]
+                    ):
                         self._disk_thumb_delete(p)
                 elif disk_meta and not current_sig:
                     self._disk_thumb_delete(p)
@@ -325,7 +430,11 @@ class GalleryPlugin(WAN2GPPlugin):
                 continue
             disk_thumb = self._disk_thumb_get(p, sig)
             if disk_thumb:
-                self._thumb_cache[p] = {"key": sig, "thumb": disk_thumb, "ts": time.time()}
+                self._thumb_cache[p] = {
+                    "key": sig,
+                    "thumb": disk_thumb,
+                    "ts": time.time(),
+                }
                 result[p] = disk_thumb
                 continue
             if p in priority_set:
@@ -333,6 +442,8 @@ class GalleryPlugin(WAN2GPPlugin):
             else:
                 normal_misses.append(p)
         to_generate = priority_misses + normal_misses
+        if len(to_generate) > self.THUMBNAIL_MAX_GENERATE_PER_REFRESH:
+            to_generate = to_generate[: self.THUMBNAIL_MAX_GENERATE_PER_REFRESH]
         if to_generate:
             generated = get_thumbnails_in_batch_windows(to_generate) or {}
             for p in to_generate:
@@ -347,11 +458,15 @@ class GalleryPlugin(WAN2GPPlugin):
         self._prune_thumb_cache()
         return result
 
-    def _build_gallery_listing(self, current_dir="", force_refresh=False, incremental_refresh=False):
+    def _build_gallery_listing(
+        self, current_dir="", force_refresh=False, incremental_refresh=False
+    ):
         roots = self._get_roots()
         cur = (current_dir or "").strip()
         cur_abs = os.path.abspath(cur) if cur else ""
-        if cur_abs and (not os.path.isdir(cur_abs) or not self._is_within_roots(cur_abs, roots)):
+        if cur_abs and (
+            not os.path.isdir(cur_abs) or not self._is_within_roots(cur_abs, roots)
+        ):
             cur_abs = ""
         folder_items = []
         file_items = []
@@ -374,7 +489,11 @@ class GalleryPlugin(WAN2GPPlugin):
 
         if not cur_abs:
             for r in roots:
-                scan = self._scan_dir_non_recursive_cached(r, force_refresh=force_refresh, incremental_refresh=incremental_refresh)
+                scan = self._scan_dir_non_recursive_cached(
+                    r,
+                    force_refresh=force_refresh,
+                    incremental_refresh=incremental_refresh,
+                )
                 for fo in scan["folders"]:
                     add_folder(fo["path"], fo["name"])
                 for f in scan["files"]:
@@ -383,7 +502,11 @@ class GalleryPlugin(WAN2GPPlugin):
             parent = os.path.abspath(os.path.join(cur_abs, os.pardir))
             if parent and parent != cur_abs and self._is_within_roots(parent, roots):
                 add_folder(parent, "⬆️ ..")
-            scan = self._scan_dir_non_recursive_cached(cur_abs, force_refresh=force_refresh, incremental_refresh=incremental_refresh)
+            scan = self._scan_dir_non_recursive_cached(
+                cur_abs,
+                force_refresh=force_refresh,
+                incremental_refresh=incremental_refresh,
+            )
             for fo in scan["folders"]:
                 add_folder(fo["path"], fo["name"])
             for f in scan["files"]:
@@ -395,11 +518,22 @@ class GalleryPlugin(WAN2GPPlugin):
         except Exception:
             file_items.sort(reverse=True)
 
-        thumb_targets = [p for p in file_items if self.has_video_file_extension(p) or self.has_image_file_extension(p)]
+        total_file_count = len(file_items)
+        if total_file_count > self.GALLERY_MAX_RENDER_ITEMS:
+            file_items = file_items[: self.GALLERY_MAX_RENDER_ITEMS]
+        hidden_file_count = max(0, total_file_count - len(file_items))
+
+        thumb_targets = [
+            p
+            for p in file_items
+            if self.has_video_file_extension(p) or self.has_image_file_extension(p)
+        ]
         visible_total_slots = 36
         visible_file_slots = max(0, visible_total_slots - len(folder_items))
         priority_thumb_targets = thumb_targets[:visible_file_slots]
-        thumbnails_dict = self._get_thumbnails_cached(thumb_targets, priority_paths=priority_thumb_targets)
+        thumbnails_dict = self._get_thumbnails_cached(
+            thumb_targets, priority_paths=priority_thumb_targets
+        )
 
         return {
             "roots": roots,
@@ -407,6 +541,8 @@ class GalleryPlugin(WAN2GPPlugin):
             "folder_items": folder_items,
             "file_items": file_items,
             "thumbnails_dict": thumbnails_dict,
+            "total_file_count": total_file_count,
+            "hidden_file_count": hidden_file_count,
         }
 
     def _render_gallery_from_listing(self, listing):
@@ -414,25 +550,40 @@ class GalleryPlugin(WAN2GPPlugin):
         folder_items = listing["folder_items"]
         file_items = listing["file_items"]
         thumbnails_dict = listing["thumbnails_dict"]
+        total_file_count = listing.get("total_file_count", len(file_items))
+        hidden_file_count = listing.get("hidden_file_count", 0)
         items_html = ""
+
+        if hidden_file_count > 0:
+            items_html += (
+                "<div class='gallery-list-limit-notice'>"
+                f"Showing newest {len(file_items)} of {total_file_count} files in this folder. "
+                f"{hidden_file_count} older files are hidden to keep the gallery stable."
+                "</div>"
+            )
 
         for fo in folder_items:
             fpath = fo["path"]
             display_name = fo["name"]
             safe_path = json.dumps(fpath, ensure_ascii=False)
+            safe_display_name = html.escape(display_name)
             items_html += f"""
             <div class="gallery-item gallery-folder" data-path={safe_path} ondblclick="openGalleryFolder(event, this)">
                 <div class="gallery-item-thumbnail" style="display:flex;align-items:center;justify-content:center;font-size:42px;">
                     📁
                 </div>
-                <div class="gallery-item-name" title="{display_name}">{display_name}</div>
+                <div class="gallery-item-name" title="{safe_display_name}">{safe_display_name}</div>
             </div>
             """
 
         for f in file_items:
             basename = os.path.basename(f)
             display_name = basename
-            match = re.search(r'_seed\d+_(.+)\.(mp4|jpg|jpeg|png|webp|wav|mp3|flac|ogg|m4a|aac)$', basename, re.IGNORECASE)
+            match = re.search(
+                r"_seed\d+_(.+)\.(mp4|jpg|jpeg|png|webp|wav|mp3|flac|ogg|m4a|aac)$",
+                basename,
+                re.IGNORECASE,
+            )
             if match:
                 display_name = match.group(1)
             is_video = self.has_video_file_extension(f)
@@ -446,17 +597,21 @@ class GalleryPlugin(WAN2GPPlugin):
                 """
             else:
                 thumbnail_html = (
-                    f'<img src="data:image/jpeg;base64,{base64_thumb}" alt="thumb">'
-                    if base64_thumb else
-                    (f'<video muted preload="metadata" src="/gradio_api/file={f}#t=0.5"></video>'
-                     if is_video
-                     else f'<img src="/gradio_api/file={f}" alt="thumb">')
+                    f'<img src="data:image/jpeg;base64,{base64_thumb}" alt="thumb" loading="lazy">'
+                    if base64_thumb
+                    else (
+                        f'<video muted preload="none" src="/gradio_api/file={f}#t=0.5"></video>'
+                        if is_video
+                        else f'<img src="/gradio_api/file={f}" alt="thumb" loading="lazy">'
+                    )
                 )
             safe_path = json.dumps(f, ensure_ascii=False)
+            safe_basename = html.escape(basename)
+            safe_display_name = html.escape(display_name)
             items_html += f"""
             <div class="gallery-item" data-path={safe_path} onclick="selectGalleryItem(event, this)">
                 <div class="gallery-item-thumbnail">{thumbnail_html}</div>
-                <div class="gallery-item-name" title="{basename}">{display_name}</div>
+                <div class="gallery-item-name" title="{safe_basename}">{safe_display_name}</div>
             </div>
             """
 
@@ -485,11 +640,13 @@ class GalleryPlugin(WAN2GPPlugin):
             self.join_interface: gr.Column(visible=False),
             self.merge_info_display: gr.Column(visible=False),
             self.current_frame_buttons_row: gr.Row(visible=False),
-            self.current_gallery_dir: cur_abs if cur_abs else ""
+            self.current_gallery_dir: cur_abs if cur_abs else "",
         }
 
     def refresh_gallery_files(self, current_state, current_dir=""):
-        listing = self._build_gallery_listing(current_dir=current_dir, force_refresh=True, incremental_refresh=True)
+        listing = self._build_gallery_listing(
+            current_dir=current_dir, force_refresh=True, incremental_refresh=True
+        )
         return self._render_gallery_from_listing(listing)
 
     def create_gallery_ui(self):
@@ -518,6 +675,15 @@ class GalleryPlugin(WAN2GPPlugin):
             }
 
             .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 16px; }
+            .gallery-list-limit-notice {
+                grid-column: 1 / -1;
+                padding: 8px 12px;
+                border: 1px solid var(--border-color-primary);
+                border-radius: 8px;
+                background-color: var(--background-fill-primary);
+                color: var(--body-text-color-subdued);
+                font-size: 12px;
+            }
             .gallery-item {
                 position: relative;
                 cursor: pointer;
@@ -774,57 +940,161 @@ class GalleryPlugin(WAN2GPPlugin):
             with gr.Column(elem_id="gallery_tab_container"):
                 with gr.Row():
                     self.refresh_gallery_files_btn = gr.Button("Refresh Files")
-                    self.delete_files_btn = gr.Button("Delete selected File", elem_id="stop-button")
+                    self.delete_files_btn = gr.Button(
+                        "Delete selected File", elem_id="stop-button"
+                    )
+                with gr.Accordion("Performance Settings", open=False):
+                    gr.Markdown(
+                        "Tune these limits if your gallery folder is very large. "
+                        "Lower values reduce memory/CPU spikes."
+                    )
+                    with gr.Row():
+                        self.gallery_max_render_items_input = gr.Slider(
+                            label="Max files rendered per refresh",
+                            minimum=50,
+                            maximum=5000,
+                            step=50,
+                            value=self.GALLERY_MAX_RENDER_ITEMS,
+                            interactive=True,
+                        )
+                        self.thumbnail_max_generate_input = gr.Slider(
+                            label="Max thumbnails generated per refresh",
+                            minimum=10,
+                            maximum=1000,
+                            step=10,
+                            value=self.THUMBNAIL_MAX_GENERATE_PER_REFRESH,
+                            interactive=True,
+                        )
+                    self.save_gallery_settings_btn = gr.Button(
+                        "Save Performance Settings", size="sm"
+                    )
                 with gr.Row(elem_id="gallery-layout"):
                     self.gallery_html_output = gr.HTML(
                         value="<div class='gallery-grid'><p class='placeholder'>Click 'Refresh Files' to load gallery.</p></div>",
-                        elem_id="gallery-container"
+                        elem_id="gallery-container",
                     )
                     with gr.Column(elem_id="metadata-panel-container"):
-                        self.join_videos_btn = gr.Button("Join 2 Selected Videos", interactive=False, visible=False)
-                        self.recreate_join_btn = gr.Button("Recreate Join From This Video", visible=False, interactive=False)
+                        self.join_videos_btn = gr.Button(
+                            "Join 2 Selected Videos", interactive=False, visible=False
+                        )
+                        self.recreate_join_btn = gr.Button(
+                            "Recreate Join From This Video",
+                            visible=False,
+                            interactive=False,
+                        )
                         with gr.Column(visible=False) as self.preview_row:
-                            self.video_preview = gr.Video(label="Preview", interactive=True, height=250, visible=False, elem_id="main_video_preview")
-                            self.image_preview = gr.Image(label="Preview", interactive=False, height=250, visible=False)
-                            self.audio_preview = gr.Audio(label="Preview", interactive=False, visible=False)
-                            with gr.Row(visible=False) as self.current_frame_buttons_row:
-                                self.use_as_start_btn = gr.Button("⬆️ as Start-Image", variant="primary", elem_id="custom-button")
-                                self.use_as_end_btn = gr.Button("as End-Image ⬆️", variant="primary", elem_id="custom-button")
-                                self.send_to_generator_settings_btn = gr.Button("Use Settings in Generator", interactive=False, visible=False)
+                            self.video_preview = gr.Video(
+                                label="Preview",
+                                interactive=True,
+                                height=250,
+                                visible=False,
+                                elem_id="main_video_preview",
+                            )
+                            self.image_preview = gr.Image(
+                                label="Preview",
+                                interactive=False,
+                                height=250,
+                                visible=False,
+                            )
+                            self.audio_preview = gr.Audio(
+                                label="Preview", interactive=False, visible=False
+                            )
+                            with gr.Row(
+                                visible=False
+                            ) as self.current_frame_buttons_row:
+                                self.use_as_start_btn = gr.Button(
+                                    "⬆️ as Start-Image",
+                                    variant="primary",
+                                    elem_id="custom-button",
+                                )
+                                self.use_as_end_btn = gr.Button(
+                                    "as End-Image ⬆️",
+                                    variant="primary",
+                                    elem_id="custom-button",
+                                )
+                                self.send_to_generator_settings_btn = gr.Button(
+                                    "Use Settings in Generator",
+                                    interactive=False,
+                                    visible=False,
+                                )
                             with gr.Row(visible=False) as self.frame_preview_row:
-                                self.first_frame_preview = gr.Image(label="First Frame", interactive=False, height=150)
-                                self.last_frame_preview = gr.Image(label="Last Frame", interactive=False, height=150)
-                        self.metadata_panel_output = gr.HTML(value="<div class='metadata-content'><p class='placeholder'>Select a file to view its metadata.</p></div>")
+                                self.first_frame_preview = gr.Image(
+                                    label="First Frame", interactive=False, height=150
+                                )
+                                self.last_frame_preview = gr.Image(
+                                    label="Last Frame", interactive=False, height=150
+                                )
+                        self.metadata_panel_output = gr.HTML(
+                            value="<div class='metadata-content'><p class='placeholder'>Select a file to view its metadata.</p></div>"
+                        )
                         with gr.Column(visible=False) as self.merge_info_display:
                             gr.Markdown("--- \n #### Merged From")
                             with gr.Row():
                                 with gr.Column():
-                                    self.merge_source1_prompt = gr.Markdown(elem_classes="metadata-content")
-                                    self.merge_source1_image = gr.Image(interactive=False, show_label=False)
+                                    self.merge_source1_prompt = gr.Markdown(
+                                        elem_classes="metadata-content"
+                                    )
+                                    self.merge_source1_image = gr.Image(
+                                        interactive=False, show_label=False
+                                    )
                                 with gr.Column():
-                                    self.merge_source2_prompt = gr.Markdown(elem_classes="metadata-content")
-                                    self.merge_source2_image = gr.Image(interactive=False, show_label=False)
+                                    self.merge_source2_prompt = gr.Markdown(
+                                        elem_classes="metadata-content"
+                                    )
+                                    self.merge_source2_image = gr.Image(
+                                        interactive=False, show_label=False
+                                    )
                         with gr.Column(visible=False) as self.join_interface:
                             with gr.Row():
                                 with gr.Column():
                                     gr.Markdown("#### Video 1 (Provides End Frame)")
-                                    self.video1_preview = gr.HTML(label="Video 1 Preview")
-                                    self.video1_frame_slider = gr.Slider(label="Frame Number", minimum=1, maximum=100, step=1, interactive=True, elem_id="video1_frame_slider")
+                                    self.video1_preview = gr.HTML(
+                                        label="Video 1 Preview"
+                                    )
+                                    self.video1_frame_slider = gr.Slider(
+                                        label="Frame Number",
+                                        minimum=1,
+                                        maximum=100,
+                                        step=1,
+                                        interactive=True,
+                                        elem_id="video1_frame_slider",
+                                    )
                                     self.video1_path = gr.Text(visible=False)
                                     self.video1_info = gr.HTML(label="Video 1 Info")
                                 with gr.Column():
                                     gr.Markdown("#### Video 2 (Provides Start Frame)")
-                                    self.video2_preview = gr.HTML(label="Video 2 Preview")
-                                    self.video2_frame_slider = gr.Slider(label="Frame Number", minimum=1, maximum=100, step=1, interactive=True, elem_id="video2_frame_slider")
+                                    self.video2_preview = gr.HTML(
+                                        label="Video 2 Preview"
+                                    )
+                                    self.video2_frame_slider = gr.Slider(
+                                        label="Frame Number",
+                                        minimum=1,
+                                        maximum=100,
+                                        step=1,
+                                        interactive=True,
+                                        elem_id="video2_frame_slider",
+                                    )
                                     self.video2_path = gr.Text(visible=False)
                                     self.video2_info = gr.HTML(label="Video 2 Info")
                             with gr.Row():
-                                self.send_to_generator_btn = gr.Button("Send Frames to Generator", variant="primary")
+                                self.send_to_generator_btn = gr.Button(
+                                    "Send Frames to Generator", variant="primary"
+                                )
                                 self.cancel_join_btn = gr.Button("Cancel")
 
-                self.selected_files_for_backend = gr.Text(label="Selected Files", visible=False, elem_id="selected-files-backend")
-                self.current_gallery_dir = gr.Text(label="Current Gallery Dir", visible=False, elem_id="current-gallery-dir")
-                self.path_for_settings_loader = gr.Text(label="Path for Settings Loader", visible=False)
+                self.selected_files_for_backend = gr.Text(
+                    label="Selected Files",
+                    visible=False,
+                    elem_id="selected-files-backend",
+                )
+                self.current_gallery_dir = gr.Text(
+                    label="Current Gallery Dir",
+                    visible=False,
+                    elem_id="current-gallery-dir",
+                )
+                self.path_for_settings_loader = gr.Text(
+                    label="Path for Settings Loader", visible=False
+                )
                 self.current_selected_video_path = gr.Text(visible=False)
 
         outputs_list = [
@@ -864,161 +1134,262 @@ class GalleryPlugin(WAN2GPPlugin):
             fn=self.refresh_gallery_files,
             inputs=[self.state, self.current_gallery_dir],
             outputs=outputs_list,
-            show_progress="hidden"
+            show_progress="hidden",
         )
 
         self.current_gallery_dir.change(
             fn=self.list_output_files_as_html,
             inputs=[self.state, self.current_gallery_dir],
             outputs=outputs_list,
-            show_progress="hidden"
+            show_progress="hidden",
         )
 
         self.delete_files_btn.click(
             fn=self.delete_selected_files,
-            inputs=[self.selected_files_for_backend, self.state, self.current_gallery_dir],
+            inputs=[
+                self.selected_files_for_backend,
+                self.state,
+                self.current_gallery_dir,
+            ],
             outputs=outputs_list,
-            show_progress="hidden"
+            show_progress="hidden",
+        )
+
+        self.save_gallery_settings_btn.click(
+            fn=self.save_gallery_performance_settings,
+            inputs=[
+                self.gallery_max_render_items_input,
+                self.thumbnail_max_generate_input,
+            ],
+            outputs=[
+                self.gallery_max_render_items_input,
+                self.thumbnail_max_generate_input,
+            ],
+            show_progress="hidden",
         )
 
         self.selected_files_for_backend.change(
             fn=self.update_metadata_panel_and_buttons,
             inputs=[self.selected_files_for_backend, self.state],
             outputs=[
-                self.join_videos_btn, self.send_to_generator_settings_btn, self.metadata_panel_output,
-                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview, self.audio_preview,
-                self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
-                self.join_interface, self.recreate_join_btn, self.merge_info_display,
-                self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image,
-                self.current_frame_buttons_row, self.current_selected_video_path
+                self.join_videos_btn,
+                self.send_to_generator_settings_btn,
+                self.metadata_panel_output,
+                self.path_for_settings_loader,
+                self.preview_row,
+                self.video_preview,
+                self.image_preview,
+                self.audio_preview,
+                self.frame_preview_row,
+                self.first_frame_preview,
+                self.last_frame_preview,
+                self.join_interface,
+                self.recreate_join_btn,
+                self.merge_info_display,
+                self.merge_source1_prompt,
+                self.merge_source1_image,
+                self.merge_source2_prompt,
+                self.merge_source2_image,
+                self.current_frame_buttons_row,
+                self.current_selected_video_path,
             ],
-            show_progress="hidden"
+            show_progress="hidden",
         )
 
         self.use_as_start_btn.click(
             fn=self.use_current_frame_as_start,
             inputs=[self.current_selected_video_path],
-            outputs=[self.image_start, self.main_tabs, self.image_start_row, self.image_prompt_type_radio],
+            outputs=[
+                self.image_start,
+                self.main_tabs,
+                self.image_start_row,
+                self.image_prompt_type_radio,
+            ],
             js="""(video_path) => {
                 const video = document.querySelector('#main_video_preview video');
                 const time = video ? video.currentTime : 0;
                 return [video_path + '|||' + time];
-            }"""
+            }""",
         )
 
         self.use_as_end_btn.click(
             fn=self.use_current_frame_as_end,
             inputs=[self.current_selected_video_path],
-            outputs=[self.image_end, self.main_tabs, self.image_end_row, self.image_prompt_type_endcheckbox],
+            outputs=[
+                self.image_end,
+                self.main_tabs,
+                self.image_end_row,
+                self.image_prompt_type_endcheckbox,
+            ],
             js="""(video_path) => {
                 const video = document.querySelector('#main_video_preview video');
                 const time = video ? video.currentTime : 0;
                 return [video_path + '|||' + time];
-            }"""
+            }""",
         )
 
         self.join_videos_btn.click(
             fn=self.show_join_interface,
             inputs=[self.selected_files_for_backend, self.state],
             outputs=[
-                self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
-                self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
-                self.video1_preview, self.video2_preview,
-                self.video1_path, self.video2_path, self.video1_frame_slider, self.video2_frame_slider,
-                self.video1_info, self.video2_info
-            ]
+                self.join_interface,
+                self.preview_row,
+                self.merge_info_display,
+                self.metadata_panel_output,
+                self.send_to_generator_settings_btn,
+                self.join_videos_btn,
+                self.recreate_join_btn,
+                self.video1_preview,
+                self.video2_preview,
+                self.video1_path,
+                self.video2_path,
+                self.video1_frame_slider,
+                self.video2_frame_slider,
+                self.video1_info,
+                self.video2_info,
+            ],
         )
 
         self.recreate_join_btn.click(
             fn=self.recreate_join_interface,
             inputs=[self.path_for_settings_loader, self.state],
             outputs=[
-                self.join_interface, self.preview_row, self.merge_info_display, self.metadata_panel_output,
-                self.send_to_generator_settings_btn, self.join_videos_btn, self.recreate_join_btn,
-                self.video1_preview, self.video2_preview,
-                self.video1_path, self.video2_path, self.video1_frame_slider, self.video2_frame_slider,
-                self.video1_info, self.video2_info
-            ]
+                self.join_interface,
+                self.preview_row,
+                self.merge_info_display,
+                self.metadata_panel_output,
+                self.send_to_generator_settings_btn,
+                self.join_videos_btn,
+                self.recreate_join_btn,
+                self.video1_preview,
+                self.video2_preview,
+                self.video1_path,
+                self.video2_path,
+                self.video1_frame_slider,
+                self.video2_frame_slider,
+                self.video1_info,
+                self.video2_info,
+            ],
         )
 
         self.send_to_generator_settings_btn.click(
             fn=self.load_settings_and_frames_from_gallery,
             inputs=[self.state, self.path_for_settings_loader],
-            outputs=[self.model_family, self.model_choice, self.main_tabs, self.refresh_form_trigger],
-            show_progress="hidden"
+            outputs=[
+                self.model_family,
+                self.model_choice,
+                self.main_tabs,
+                self.refresh_form_trigger,
+            ],
+            show_progress="hidden",
         )
 
         self.send_to_generator_btn.click(
             fn=self.send_selected_frames_to_generator,
-            inputs=[self.video1_path, self.video1_frame_slider, self.video2_path, self.video2_frame_slider, self.image_prompt_type],
-            outputs=[self.image_start, self.image_end, self.main_tabs, self.join_interface, self.image_prompt_type,
-                     self.image_start_row, self.image_end_row, self.image_prompt_type_radio, self.image_prompt_type_endcheckbox,
-                     self.plugin_data]
+            inputs=[
+                self.video1_path,
+                self.video1_frame_slider,
+                self.video2_path,
+                self.video2_frame_slider,
+                self.image_prompt_type,
+            ],
+            outputs=[
+                self.image_start,
+                self.image_end,
+                self.main_tabs,
+                self.join_interface,
+                self.image_prompt_type,
+                self.image_start_row,
+                self.image_end_row,
+                self.image_prompt_type_radio,
+                self.image_prompt_type_endcheckbox,
+                self.plugin_data,
+            ],
         )
 
         self.cancel_join_btn.click(
             fn=self.update_metadata_panel_and_buttons,
             inputs=[self.selected_files_for_backend, self.state],
             outputs=[
-                self.join_videos_btn, self.send_to_generator_settings_btn, self.metadata_panel_output,
-                self.path_for_settings_loader, self.preview_row, self.video_preview, self.image_preview, self.audio_preview,
-                self.frame_preview_row, self.first_frame_preview, self.last_frame_preview,
-                self.join_interface, self.recreate_join_btn, self.merge_info_display,
-                self.merge_source1_prompt, self.merge_source1_image, self.merge_source2_prompt, self.merge_source2_image,
-                self.current_frame_buttons_row, self.current_selected_video_path
-            ]
+                self.join_videos_btn,
+                self.send_to_generator_settings_btn,
+                self.metadata_panel_output,
+                self.path_for_settings_loader,
+                self.preview_row,
+                self.video_preview,
+                self.image_preview,
+                self.audio_preview,
+                self.frame_preview_row,
+                self.first_frame_preview,
+                self.last_frame_preview,
+                self.join_interface,
+                self.recreate_join_btn,
+                self.merge_info_display,
+                self.merge_source1_prompt,
+                self.merge_source1_image,
+                self.merge_source2_prompt,
+                self.merge_source2_image,
+                self.current_frame_buttons_row,
+                self.current_selected_video_path,
+            ],
         )
 
         return gallery_blocks
 
     def use_current_frame_as_start(self, video_path_with_time):
         print(f"Debug: video_path_with_time={video_path_with_time}")
-        if not video_path_with_time or '|||' not in video_path_with_time:
+        if not video_path_with_time or "|||" not in video_path_with_time:
             gr.Warning("No video selected or invalid data.")
             return gr.update(), gr.update(), gr.update(), gr.update()
         try:
-            video_path, current_time_str = video_path_with_time.split('|||')
+            video_path, current_time_str = video_path_with_time.split("|||")
             current_time = float(current_time_str)
             print(f"Debug parsed: video_path={video_path}, time={current_time}")
             fps, _, _, _ = self.get_video_info(video_path)
             frame_number = int(current_time * fps)
-            current_frame = self.get_video_frame(video_path, frame_number, return_PIL=True)
+            current_frame = self.get_video_frame(
+                video_path, frame_number, return_PIL=True
+            )
             gr.Info(f"Current frame (frame {frame_number + 1}) set as Start-Image.")
             return {
                 self.image_start: [(current_frame, "Current Frame")],
                 self.main_tabs: gr.Tabs(selected="video_gen"),
                 self.image_start_row: gr.Row(visible=True),
-                self.image_prompt_type_radio: gr.Radio(value="S")
+                self.image_prompt_type_radio: gr.Radio(value="S"),
             }
         except Exception as e:
             print(f"Error in use_current_frame_as_start: {e}")
             import traceback
+
             traceback.print_exc()
             gr.Warning(f"Error extracting frame: {e}")
             return gr.update(), gr.update(), gr.update(), gr.update()
 
     def use_current_frame_as_end(self, video_path_with_time):
         print(f"Debug: video_path_with_time={video_path_with_time}")
-        if not video_path_with_time or '|||' not in video_path_with_time:
+        if not video_path_with_time or "|||" not in video_path_with_time:
             gr.Warning("No video selected or invalid data.")
             return gr.update(), gr.update(), gr.update(), gr.update()
         try:
-            video_path, current_time_str = video_path_with_time.split('|||')
+            video_path, current_time_str = video_path_with_time.split("|||")
             current_time = float(current_time_str)
             print(f"Debug parsed: video_path={video_path}, time={current_time}")
             fps, _, _, _ = self.get_video_info(video_path)
             frame_number = int(current_time * fps)
-            current_frame = self.get_video_frame(video_path, frame_number, return_PIL=True)
+            current_frame = self.get_video_frame(
+                video_path, frame_number, return_PIL=True
+            )
             gr.Info(f"Current frame (frame {frame_number + 1}) set as End-Image.")
             return {
                 self.image_end: [(current_frame, "Current Frame")],
                 self.main_tabs: gr.Tabs(selected="video_gen"),
                 self.image_end_row: gr.Row(visible=True),
-                self.image_prompt_type_endcheckbox: gr.Checkbox(value=True)
+                self.image_prompt_type_endcheckbox: gr.Checkbox(value=True),
             }
         except Exception as e:
             print(f"Error in use_current_frame_as_end: {e}")
             import traceback
+
             traceback.print_exc()
             gr.Warning(f"Error extracting frame: {e}")
             return gr.update(), gr.update(), gr.update(), gr.update()
@@ -1028,7 +1399,7 @@ class GalleryPlugin(WAN2GPPlugin):
             gr.Warning("No files selected for deletion.")
             return self.list_output_files_as_html(current_state, current_dir)
 
-        file_paths = [p for p in selection_str.split('||') if p]
+        file_paths = [p for p in selection_str.split("||") if p]
         deleted_count = 0
         failed_count = 0
         touched_dirs = set()
@@ -1043,14 +1414,16 @@ class GalleryPlugin(WAN2GPPlugin):
                     os.remove(file_path)
                     deleted_count += 1
                     base_path = os.path.splitext(file_path)[0]
-                    metadata_extensions = ['.txt', '.json', '.metadata']
+                    metadata_extensions = [".txt", ".json", ".metadata"]
                     for ext in metadata_extensions:
                         metadata_path = base_path + ext
                         if os.path.exists(metadata_path):
                             try:
                                 os.remove(metadata_path)
                             except Exception as e:
-                                print(f"Could not delete metadata file {metadata_path}: {e}")
+                                print(
+                                    f"Could not delete metadata file {metadata_path}: {e}"
+                                )
                 else:
                     failed_count += 1
                     print(f"File not found: {file_path}")
@@ -1071,7 +1444,9 @@ class GalleryPlugin(WAN2GPPlugin):
         return self.refresh_gallery_files(current_state, current_dir)
 
     def list_output_files_as_html(self, current_state, current_dir=""):
-        listing = self._build_gallery_listing(current_dir=current_dir, force_refresh=False, incremental_refresh=False)
+        listing = self._build_gallery_listing(
+            current_dir=current_dir, force_refresh=False, incremental_refresh=False
+        )
         return self._render_gallery_from_listing(listing)
 
     def add_merge_info_to_metadata(self, configs, plugin_data, **kwargs):
@@ -1082,11 +1457,13 @@ class GalleryPlugin(WAN2GPPlugin):
     def probe_audio_ffprobe(self, file_path: str) -> dict:
         cmd = [
             "ffprobe",
-            "-v", "error",
-            "-print_format", "json",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
-            file_path
+            file_path,
         ]
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -1130,7 +1507,7 @@ class GalleryPlugin(WAN2GPPlugin):
         values, labels = [os.path.basename(file_path)], ["File Name"]
 
         creation_date = str(self.get_file_creation_date(file_path))
-        values.append(creation_date[:creation_date.rfind('.')])
+        values.append(creation_date[: creation_date.rfind(".")])
         labels.append("Creation Date")
 
         try:
@@ -1165,12 +1542,15 @@ class GalleryPlugin(WAN2GPPlugin):
         rows = [
             f"<TR><TD style='text-align: right; vertical-align: top; width:1%; white-space:nowrap;'>{l}</TD>"
             f"<TD><B>{v}</B></TD></TR>"
-            for l, v in zip(labels, values) if v is not None
+            for l, v in zip(labels, values)
+            if v is not None
         ]
         return f"<TABLE ID=video_info WIDTH=100%>{''.join(rows)}</TABLE>"
 
     def get_video_info_html(self, current_state, file_path):
-        configs, _, _ = self.get_settings_from_file(current_state, file_path, False, False, False)
+        configs, _, _ = self.get_settings_from_file(
+            current_state, file_path, False, False, False
+        )
         values, labels = [os.path.basename(file_path)], ["File Name"]
         misc_values, misc_labels, pp_values, pp_labels = [], [], [], []
         is_image = self.has_image_file_extension(file_path)
@@ -1189,19 +1569,26 @@ class GalleryPlugin(WAN2GPPlugin):
                 pp_values.append(configs["temporal_upsampling"])
                 pp_labels.append("Upsampling")
             if configs.get("film_grain_intensity", 0) > 0:
-                pp_values.append(f"Intensity={configs['film_grain_intensity']}, Saturation={configs['film_grain_saturation']}")
+                pp_values.append(
+                    f"Intensity={configs['film_grain_intensity']}, Saturation={configs['film_grain_saturation']}"
+                )
                 pp_labels.append("Film Grain")
         if configs is None or "seed" not in configs:
             values.extend(misc_values)
             labels.extend(misc_labels)
             creation_date = str(self.get_file_creation_date(file_path))
-            values.append(creation_date[:creation_date.rfind('.')])
+            values.append(creation_date[: creation_date.rfind(".")])
             labels.append("Creation Date")
             if is_image:
                 values.append(f"{width}x{height}")
                 labels.append("Resolution")
             else:
-                values.extend([f"{width}x{height}", f"{frames_count} frames (duration={frames_count/fps:.1f}s, fps={round(fps)})"])
+                values.extend(
+                    [
+                        f"{width}x{height}",
+                        f"{frames_count} frames (duration={frames_count / fps:.1f}s, fps={round(fps)})",
+                    ]
+                )
                 labels.extend(["Resolution", "Frames"])
             if nb_audio_tracks > 0:
                 values.append(nb_audio_tracks)
@@ -1213,26 +1600,39 @@ class GalleryPlugin(WAN2GPPlugin):
             labels.extend(misc_labels)
             values.append(configs.get("prompt", "")[:1024])
             labels.append("Text Prompt")
-            values.extend([
-                f"{configs.get('resolution', '')} (real: {width}x{height})",
-                configs.get('video_length', 0),
-                configs.get('seed', -1),
-                configs.get('guidance_scale', 'N/A'),
-                configs.get('num_inference_steps', 'N/A')
-            ])
-            labels.extend(["Resolution", "Video Length", "Seed", "Guidance (CFG)", "Num Inference steps"])
+            values.extend(
+                [
+                    f"{configs.get('resolution', '')} (real: {width}x{height})",
+                    configs.get("video_length", 0),
+                    configs.get("seed", -1),
+                    configs.get("guidance_scale", "N/A"),
+                    configs.get("num_inference_steps", "N/A"),
+                ]
+            )
+            labels.extend(
+                [
+                    "Resolution",
+                    "Video Length",
+                    "Seed",
+                    "Guidance (CFG)",
+                    "Num Inference steps",
+                ]
+            )
         rows = [
             f"<TR><TD style='text-align: right; vertical-align: top; width:1%; white-space:nowrap;'>{l}</TD><TD><B>{v}</B></TD></TR>"
-            for l, v in zip(labels, values) if v is not None
+            for l, v in zip(labels, values)
+            if v is not None
         ]
         return f"<TABLE ID=video_info WIDTH=100%>{''.join(rows)}</TABLE>"
 
     def update_metadata_panel_and_buttons(self, selection_str, current_state):
-        file_paths = selection_str.split('||') if selection_str else []
+        file_paths = selection_str.split("||") if selection_str else []
         video_files = [f for f in file_paths if self.has_video_file_extension(f)]
 
         updates = {
-            self.join_videos_btn: gr.Button(visible=len(video_files) == 2 and len(file_paths) == 2, interactive=True),
+            self.join_videos_btn: gr.Button(
+                visible=len(video_files) == 2 and len(file_paths) == 2, interactive=True
+            ),
             self.recreate_join_btn: gr.Button(visible=False),
             self.send_to_generator_settings_btn: gr.Button(visible=False),
             self.path_for_settings_loader: "",
@@ -1245,47 +1645,95 @@ class GalleryPlugin(WAN2GPPlugin):
             self.last_frame_preview: gr.Image(value=None),
             self.join_interface: gr.Column(visible=False),
             self.merge_info_display: gr.Column(visible=False),
-            self.metadata_panel_output: gr.HTML(value="<div class='metadata-content'><p class='placeholder'>Select a file to view its metadata.</p></div>", visible=True),
+            self.metadata_panel_output: gr.HTML(
+                value="<div class='metadata-content'><p class='placeholder'>Select a file to view its metadata.</p></div>",
+                visible=True,
+            ),
             self.merge_source1_prompt: gr.Markdown(value=""),
             self.merge_source1_image: gr.Image(value=None),
             self.merge_source2_prompt: gr.Markdown(value=""),
             self.merge_source2_image: gr.Image(value=None),
             self.current_frame_buttons_row: gr.Row(visible=False),
-            self.current_selected_video_path: ""
+            self.current_selected_video_path: "",
         }
 
         if len(file_paths) == 1:
             file_path = file_paths[0]
             updates[self.path_for_settings_loader] = file_path
-            configs, _, _ = self.get_settings_from_file(current_state, file_path, False, False, False)
-            updates[self.send_to_generator_settings_btn] = gr.Button(visible=True, interactive=bool(configs))
+            configs, _, _ = self.get_settings_from_file(
+                current_state, file_path, False, False, False
+            )
+            updates[self.send_to_generator_settings_btn] = gr.Button(
+                visible=True, interactive=bool(configs)
+            )
             if self.has_audio_file_extension(file_path):
-                updates[self.metadata_panel_output] = gr.HTML(value=self.get_audio_info_html(file_path), visible=True)
+                updates[self.metadata_panel_output] = gr.HTML(
+                    value=self.get_audio_info_html(file_path), visible=True
+                )
             else:
-                updates[self.metadata_panel_output] = gr.HTML(value=self.get_video_info_html(current_state, file_path), visible=True)
+                updates[self.metadata_panel_output] = gr.HTML(
+                    value=self.get_video_info_html(current_state, file_path),
+                    visible=True,
+                )
 
             if configs and "merge_info" in configs:
                 merge_info = configs["merge_info"]
                 save_path = self.server_config.get("save_path", "outputs")
                 image_save_path = self.server_config.get("image_save_path", "outputs")
-                vid1_rel, vid2_rel = merge_info['source_video_1']['path'], merge_info['source_video_2']['path']
-                vid1_abs = next((p for p in [os.path.join(save_path, vid1_rel), os.path.join(image_save_path, vid1_rel)] if os.path.exists(p)), None)
-                vid2_abs = next((p for p in [os.path.join(save_path, vid2_rel), os.path.join(image_save_path, vid2_rel)] if os.path.exists(p)), None)
+                vid1_rel, vid2_rel = (
+                    merge_info["source_video_1"]["path"],
+                    merge_info["source_video_2"]["path"],
+                )
+                vid1_abs = next(
+                    (
+                        p
+                        for p in [
+                            os.path.join(save_path, vid1_rel),
+                            os.path.join(image_save_path, vid1_rel),
+                        ]
+                        if os.path.exists(p)
+                    ),
+                    None,
+                )
+                vid2_abs = next(
+                    (
+                        p
+                        for p in [
+                            os.path.join(save_path, vid2_rel),
+                            os.path.join(image_save_path, vid2_rel),
+                        ]
+                        if os.path.exists(p)
+                    ),
+                    None,
+                )
 
                 if vid1_abs and vid2_abs:
-                    updates[self.recreate_join_btn] = gr.Button(visible=True, interactive=True)
+                    updates[self.recreate_join_btn] = gr.Button(
+                        visible=True, interactive=True
+                    )
                     updates[self.merge_info_display] = gr.Column(visible=True)
-                    f1_num, f2_num = merge_info['source_video_1']['frame_used'], merge_info['source_video_2']['frame_used']
+                    f1_num, f2_num = (
+                        merge_info["source_video_1"]["frame_used"],
+                        merge_info["source_video_2"]["frame_used"],
+                    )
                     f1_pil = self.get_video_frame(vid1_abs, f1_num - 1, return_PIL=True)
                     f2_pil = self.get_video_frame(vid2_abs, f2_num - 1, return_PIL=True)
-                    c1, _, _ = self.get_settings_from_file(current_state, vid1_abs, False, False, False)
-                    c2, _, _ = self.get_settings_from_file(current_state, vid2_abs, False, False, False)
-                    p1 = (c1.get('prompt', 'N/A') if c1 else 'N/A')
-                    p2 = (c2.get('prompt', 'N/A') if c2 else 'N/A')
+                    c1, _, _ = self.get_settings_from_file(
+                        current_state, vid1_abs, False, False, False
+                    )
+                    c2, _, _ = self.get_settings_from_file(
+                        current_state, vid2_abs, False, False, False
+                    )
+                    p1 = c1.get("prompt", "N/A") if c1 else "N/A"
+                    p2 = c2.get("prompt", "N/A") if c2 else "N/A"
 
-                    updates[self.merge_source1_prompt] = f"<b>{vid1_rel} (Frame {f1_num})</b><br>{p1[:100] + '...' if len(p1) > 100 else p1}"
+                    updates[self.merge_source1_prompt] = (
+                        f"<b>{vid1_rel} (Frame {f1_num})</b><br>{p1[:100] + '...' if len(p1) > 100 else p1}"
+                    )
                     updates[self.merge_source1_image] = f1_pil
-                    updates[self.merge_source2_prompt] = f"<b>{vid2_rel} (Frame {f2_num})</b><br>{p2[:100] + '...' if len(p2) > 100 else p2}"
+                    updates[self.merge_source2_prompt] = (
+                        f"<b>{vid2_rel} (Frame {f2_num})</b><br>{p2[:100] + '...' if len(p2) > 100 else p2}"
+                    )
                     updates[self.merge_source2_image] = f2_pil
                 else:
                     updates[self.preview_row] = gr.Column(visible=True)
@@ -1294,7 +1742,9 @@ class GalleryPlugin(WAN2GPPlugin):
                 updates[self.preview_row] = gr.Column(visible=True)
 
                 if self.has_video_file_extension(file_path):
-                    updates[self.video_preview] = gr.Video(value=file_path, visible=True)
+                    updates[self.video_preview] = gr.Video(
+                        value=file_path, visible=True
+                    )
                     updates[self.image_preview] = gr.Image(visible=False, value=None)
                     updates[self.audio_preview] = gr.Audio(visible=False, value=None)
 
@@ -1302,28 +1752,28 @@ class GalleryPlugin(WAN2GPPlugin):
                     updates[self.current_selected_video_path] = file_path
 
                     updates[self.frame_preview_row] = gr.Row(visible=True)
-                    first_frame_pil = self.get_video_frame(file_path, 0, return_PIL=True)
+                    first_frame_pil = self.get_video_frame(
+                        file_path, 0, return_PIL=True
+                    )
                     _, _, _, frame_count = self.get_video_info(file_path)
                     last_frame_pil = (
-                        self.get_video_frame(file_path, frame_count - 1, return_PIL=True)
-                        if frame_count > 1 else first_frame_pil
+                        self.get_video_frame(
+                            file_path, frame_count - 1, return_PIL=True
+                        )
+                        if frame_count > 1
+                        else first_frame_pil
                     )
 
                     updates[self.first_frame_preview] = gr.Image(
-                        value=first_frame_pil,
-                        label="First Frame"
+                        value=first_frame_pil, label="First Frame"
                     )
                     updates[self.last_frame_preview] = gr.Image(
-                        value=last_frame_pil,
-                        label="Last Frame",
-                        visible=True
+                        value=last_frame_pil, label="Last Frame", visible=True
                     )
 
                 elif self.has_image_file_extension(file_path):
                     updates[self.image_preview] = gr.Image(
-                        value=Image.open(file_path),
-                        label="Image Preview",
-                        visible=True
+                        value=Image.open(file_path), label="Image Preview", visible=True
                     )
                     updates[self.video_preview] = gr.Video(visible=False, value=None)
                     updates[self.audio_preview] = gr.Audio(visible=False, value=None)
@@ -1334,8 +1784,7 @@ class GalleryPlugin(WAN2GPPlugin):
 
                 elif self.has_audio_file_extension(file_path):
                     updates[self.audio_preview] = gr.Audio(
-                        value=file_path,
-                        visible=True
+                        value=file_path, visible=True
                     )
                     updates[self.video_preview] = gr.Video(visible=False, value=None)
                     updates[self.image_preview] = gr.Image(visible=False, value=None)
@@ -1353,7 +1802,10 @@ class GalleryPlugin(WAN2GPPlugin):
                     updates[self.current_selected_video_path] = ""
 
         elif len(file_paths) > 1:
-            updates[self.metadata_panel_output] = gr.HTML(value=f"<div class='metadata-content'><p>{len(file_paths)} items selected.</p></div>", visible=True)
+            updates[self.metadata_panel_output] = gr.HTML(
+                value=f"<div class='metadata-content'><p>{len(file_paths)} items selected.</p></div>",
+                visible=True,
+            )
 
         return updates
 
@@ -1361,7 +1813,9 @@ class GalleryPlugin(WAN2GPPlugin):
         if not file_path:
             gr.Warning("No file selected.")
             return gr.update(), gr.update(), gr.update(), gr.update()
-        configs, _, _ = self.get_settings_from_file(current_state, file_path, True, True, True)
+        configs, _, _ = self.get_settings_from_file(
+            current_state, file_path, True, True, True
+        )
         if not configs:
             gr.Info("No settings found.")
             return gr.update(), gr.update(), gr.update(), gr.update()
@@ -1375,13 +1829,21 @@ class GalleryPlugin(WAN2GPPlugin):
             first_frame = self.get_video_frame(file_path, 0, return_PIL=True)
             _, _, _, frame_count = self.get_video_info(file_path)
             if frame_count > 1:
-                last_frame = self.get_video_frame(file_path, frame_count - 1, return_PIL=True)
+                last_frame = self.get_video_frame(
+                    file_path, frame_count - 1, return_PIL=True
+                )
         elif self.has_image_file_extension(file_path):
             first_frame = Image.open(file_path)
-        allowed_prompts = self.get_model_def(target_model_type).get("image_prompt_types_allowed", "")
+        allowed_prompts = self.get_model_def(target_model_type).get(
+            "image_prompt_types_allowed", ""
+        )
         configs = {**self.get_default_settings(target_model_type), **configs}
         if first_frame:
-            updated_prompts = self.add_to_sequence(configs.get("image_prompt_type", ""), "S") if "S" in allowed_prompts else configs.get("image_prompt_type", "")
+            updated_prompts = (
+                self.add_to_sequence(configs.get("image_prompt_type", ""), "S")
+                if "S" in allowed_prompts
+                else configs.get("image_prompt_type", "")
+            )
             configs["image_start"] = [(first_frame, "First Frame")]
             if last_frame and "E" in allowed_prompts:
                 updated_prompts = self.add_to_sequence(updated_prompts, "E")
@@ -1389,11 +1851,19 @@ class GalleryPlugin(WAN2GPPlugin):
             configs["image_prompt_type"] = updated_prompts
         self.set_model_settings(current_state, target_model_type, configs)
         gr.Info(f"Settings from '{os.path.basename(file_path)}' sent to generator.")
-        mf, mbc, mc = (gr.update(), gr.update(), gr.update()) if target_model_type == current_model_type else self.generate_dropdown_model_list(target_model_type)
+        mf, mbc, mc = (
+            (gr.update(), gr.update(), gr.update())
+            if target_model_type == current_model_type
+            else self.generate_dropdown_model_list(target_model_type)
+        )
         return mf, mc, gr.update(selected="video_gen"), self.get_unique_id()
 
     def show_join_interface(self, selection_str, current_state):
-        video_files = [f for f in selection_str.split('||') if self.has_video_file_extension(f)] if selection_str else []
+        video_files = (
+            [f for f in selection_str.split("||") if self.has_video_file_extension(f)]
+            if selection_str
+            else []
+        )
         if len(video_files) != 2:
             gr.Warning("Please select exactly two videos.")
             return {}
@@ -1401,21 +1871,49 @@ class GalleryPlugin(WAN2GPPlugin):
 
     def recreate_join_interface(self, file_info, current_state):
         if isinstance(file_info, str):
-            configs, _, _ = self.get_settings_from_file(current_state, file_info, False, False, False)
+            configs, _, _ = self.get_settings_from_file(
+                current_state, file_info, False, False, False
+            )
             if not (configs and "merge_info" in configs):
                 gr.Warning("Could not find merge info in the selected file.")
                 return {}
             merge_info = configs["merge_info"]
             save_path = self.server_config.get("save_path", "outputs")
             image_save_path = self.server_config.get("image_save_path", "outputs")
-            vid1_rel, vid2_rel = merge_info['source_video_1']['path'], merge_info['source_video_2']['path']
-            vid1_abs = next((p for p in [os.path.join(save_path, vid1_rel), os.path.join(image_save_path, vid1_rel)] if os.path.exists(p)), None)
-            vid2_abs = next((p for p in [os.path.join(save_path, vid2_rel), os.path.join(image_save_path, vid2_rel)] if os.path.exists(p)), None)
+            vid1_rel, vid2_rel = (
+                merge_info["source_video_1"]["path"],
+                merge_info["source_video_2"]["path"],
+            )
+            vid1_abs = next(
+                (
+                    p
+                    for p in [
+                        os.path.join(save_path, vid1_rel),
+                        os.path.join(image_save_path, vid1_rel),
+                    ]
+                    if os.path.exists(p)
+                ),
+                None,
+            )
+            vid2_abs = next(
+                (
+                    p
+                    for p in [
+                        os.path.join(save_path, vid2_rel),
+                        os.path.join(image_save_path, vid2_rel),
+                    ]
+                    if os.path.exists(p)
+                ),
+                None,
+            )
             if not (vid1_abs and vid2_abs):
                 gr.Warning("One or both source videos for merging could not be found.")
                 return {}
             vid1_path, vid2_path = vid1_abs, vid2_abs
-            frame1_num, frame2_num = merge_info['source_video_1']['frame_used'], merge_info['source_video_2']['frame_used']
+            frame1_num, frame2_num = (
+                merge_info["source_video_1"]["frame_used"],
+                merge_info["source_video_2"]["frame_used"],
+            )
         elif isinstance(file_info, list) and len(file_info) == 2:
             vid1_path, vid2_path = file_info[0], file_info[1]
             _, _, _, v1_frames = self.get_video_info(vid1_path)
@@ -1423,8 +1921,14 @@ class GalleryPlugin(WAN2GPPlugin):
         else:
             return {}
 
-        server_port_val = int(self.args.server_port) if self.args.server_port != 0 else 7860
-        server_name_val = self.args.server_name if self.args.server_name and self.args.server_name != "0.0.0.0" else "127.0.0.1"
+        server_port_val = (
+            int(self.args.server_port) if self.args.server_port != 0 else 7860
+        )
+        server_name_val = (
+            self.args.server_name
+            if self.args.server_name and self.args.server_name != "0.0.0.0"
+            else "127.0.0.1"
+        )
         base_url = f"http://{server_name_val}:{server_port_val}"
         v1_fps, _, _, v1_frames = self.get_video_info(vid1_path)
         v2_fps, _, _, v2_frames = self.get_video_info(vid2_path)
@@ -1432,8 +1936,12 @@ class GalleryPlugin(WAN2GPPlugin):
         def create_player(container_id, slider_id, path, fps):
             return f'<div id="{container_id}" class="video-joiner-player" data-slider-id="{slider_id}" data-fps="{fps}"><video src="{base_url}/gradio_api/file={path}" style="width:100%;" controls muted preload="metadata"></video></div>'
 
-        player1_html = create_player("video1_player_container", "video1_frame_slider", vid1_path, v1_fps)
-        player2_html = create_player("video2_player_container", "video2_frame_slider", vid2_path, v2_fps)
+        player1_html = create_player(
+            "video1_player_container", "video1_frame_slider", vid1_path, v1_fps
+        )
+        player2_html = create_player(
+            "video2_player_container", "video2_frame_slider", vid2_path, v2_fps
+        )
 
         return {
             self.join_interface: gr.Column(visible=True),
@@ -1450,23 +1958,27 @@ class GalleryPlugin(WAN2GPPlugin):
             self.video1_frame_slider: gr.Slider(maximum=v1_frames, value=frame1_num),
             self.video2_frame_slider: gr.Slider(maximum=v2_frames, value=frame2_num),
             self.video1_info: self.get_video_info_html(current_state, vid1_path),
-            self.video2_info: self.get_video_info_html(current_state, vid2_path)
+            self.video2_info: self.get_video_info_html(current_state, vid2_path),
         }
 
-    def send_selected_frames_to_generator(self, vid1_path, frame1_num, vid2_path, frame2_num, current_image_prompt_type):
+    def send_selected_frames_to_generator(
+        self, vid1_path, frame1_num, vid2_path, frame2_num, current_image_prompt_type
+    ):
         frame1 = self.get_video_frame(vid1_path, int(frame1_num) - 1, return_PIL=True)
         frame2 = self.get_video_frame(vid2_path, int(frame2_num) - 1, return_PIL=True)
         gr.Info("Frames sent to Video Generator.")
-        updated_image_prompt_type = self.add_to_sequence(current_image_prompt_type, "SE")
+        updated_image_prompt_type = self.add_to_sequence(
+            current_image_prompt_type, "SE"
+        )
         merge_info = {
             "source_video_1": {
                 "path": os.path.basename(vid1_path),
-                "frame_used": int(frame1_num)
+                "frame_used": int(frame1_num),
             },
             "source_video_2": {
                 "path": os.path.basename(vid2_path),
-                "frame_used": int(frame2_num)
-            }
+                "frame_used": int(frame2_num),
+            },
         }
         return {
             self.image_start: [(frame1, "Start Frame")],
@@ -1478,6 +1990,5 @@ class GalleryPlugin(WAN2GPPlugin):
             self.image_end_row: gr.Row(visible=True),
             self.image_prompt_type_radio: gr.Radio(value="S"),
             self.image_prompt_type_endcheckbox: gr.Checkbox(value=True),
-            self.plugin_data: {"merge_info": merge_info}
+            self.plugin_data: {"merge_info": merge_info},
         }
-    
